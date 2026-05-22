@@ -1,0 +1,109 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: rust-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build HAL
+        run: cargo build --release --manifest-path hal/Cargo.toml
+
+      - name: Build UNIPKG
+        run: cargo build --release --manifest-path unipkg/Cargo.toml
+
+      - name: Build Intent Engine
+        run: cargo build --release --manifest-path intent-engine/Cargo.toml
+
+      - name: Build Memory subsystem
+        run: cargo build --release --manifest-path memory/Cargo.toml
+
+      - name: Build Scheduler
+        run: cargo build --release --manifest-path scheduler/Cargo.toml
+
+      - name: Build Shell
+        run: cargo build --release --manifest-path shell/Cargo.toml
+
+      - name: Run all Rust tests
+        run: cargo test --workspace
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognos-binaries
+          path: target/release/cognos-*
+
+  build-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r agents/requirements.txt
+
+      - name: Syntax check all agent files
+        run: python -m py_compile agents/*.py
+
+      - name: Run Python tests
+        run: |
+          if [ -d agents/tests ]; then
+            python -m pytest agents/tests/ -v
+          else
+            echo "No agent tests directory yet — skipping"
+          fi
+
+  build-kernel:
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libncurses-dev bison flex \
+            libssl-dev libelf-dev bc dwarves cpio pahole
+
+      - name: Cache kernel source
+        uses: actions/cache@v4
+        with:
+          path: build/cache/
+          key: kernel-${{ hashFiles('kernel/config/cognos_defconfig') }}
+
+      - name: Build kernel
+        run: bash build/kernel_build.sh
+
+      - name: Verify required kernel config options
+        run: bash build/verify_kernel_config.sh
+
+      - name: Upload kernel debs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cognos-kernel
+          path: build/output/linux-*.deb
