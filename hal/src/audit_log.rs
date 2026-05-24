@@ -107,7 +107,7 @@ impl AuditLog {
         let chain_path = log_path
             .parent()
             .unwrap_or(Path::new("/tmp"))
-            .join(CHAIN_FILE.split('/').last().unwrap_or("audit.chain"));
+            .join(CHAIN_FILE.split('/').next_back().unwrap_or("audit.chain"));
 
         // Load previous chain tip or initialise
         let previous_hash = Self::load_chain_tip(&chain_path);
@@ -198,8 +198,8 @@ impl AuditLog {
     pub fn show(&self, filter: &AuditFilter) {
         let entries = self.query(filter);
         println!(
-            "{:<26} {:<12} {:<20} {:<12} {}",
-            "TIMESTAMP", "AGENT", "ACTION", "OUTCOME", "TARGET"
+            "{:<26} {:<12} {:<20} {:<12} TARGET",
+            "TIMESTAMP", "AGENT", "ACTION", "OUTCOME"
         );
         println!("{}", "-".repeat(90));
         for e in &entries {
