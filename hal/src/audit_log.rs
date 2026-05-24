@@ -297,7 +297,7 @@ impl AuditLog {
             // Open fresh file
             let file = std::fs::OpenOptions::new()
                 .create(true)
-                .write(true)
+                .append(true)
                 .open(&inner.log_path)?;
             inner.writer = BufWriter::new(file);
             inner.previous_hash =
