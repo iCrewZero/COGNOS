@@ -1,3 +1,0 @@
-"test de signature" 
-"test avec signature active" 
-"test vert" 
