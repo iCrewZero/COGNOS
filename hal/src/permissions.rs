@@ -1,11 +1,3 @@
-/// HAL Permissions — capability lattice enforcement for COGNOS/OS.
-///
-/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship.
-///
-/// Anything not explicitly ALLOW-listed is implicitly DENY.
-/// Violations are logged as security events and rejected before any
-/// message reaches the target agent.
-
 use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
