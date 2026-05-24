@@ -82,6 +82,9 @@ const KNOWN_AGENTS: &[&str] = &[
     "file", "coding", "ui",
 ];
 
+/// Maximum allowed size for a UI socket response payload.
+const MAX_UI_RESPONSE_SIZE: usize = 4096;
+
 fn is_known_agent(name: &str) -> bool {
     KNOWN_AGENTS.contains(&name)
 }
@@ -282,7 +285,10 @@ fn handle_connection(
             // Set 30-second timeout for user response
             let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
             let result = request_ui_decision(&hal_ui_socket, &request, score, &level);
-            let (approved, reason) = result.unwrap_or((false, GateReason::TimeoutDeny));
+            let (approved, reason) = match result {
+                Ok(Some(decision)) => decision,
+                Ok(None) | Err(_) => (false, GateReason::TimeoutDeny),
+            };
             let outcome = if approved { "approved" } else { "denied" };
             audit_entry(&audit_log, &request, score, &format!("{:?}", level).to_lowercase(), outcome, "");
             GateResponse {
@@ -324,7 +330,7 @@ fn request_ui_decision(
     req: &GateRequest,
     score: f32,
     level: &HalLevel,
-) -> Option<(bool, GateReason)> {
+) -> std::io::Result<Option<(bool, GateReason)>> {
     // Try to reach the shell UI
     match UnixStream::connect(socket_path) {
         Ok(mut s) => {
@@ -346,25 +352,36 @@ fn request_ui_decision(
             let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
             let mut len_buf = [0u8; 4];
             if s.read_exact(&mut len_buf).is_err() {
-                return None; // timeout → caller uses TimeoutDeny
+                return Ok(None); // timeout → caller uses TimeoutDeny
             }
             let resp_len = u32::from_be_bytes(len_buf) as usize;
+            if resp_len > MAX_UI_RESPONSE_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "UI response length {resp_len} exceeds maximum of {MAX_UI_RESPONSE_SIZE} bytes"
+                    ),
+                ));
+            }
             let mut resp_buf = vec![0u8; resp_len];
             if s.read_exact(&mut resp_buf).is_err() {
-                return None;
+                return Ok(None);
             }
-            let resp: serde_json::Value = serde_json::from_slice(&resp_buf).ok()?;
+            let resp: serde_json::Value = match serde_json::from_slice(&resp_buf) {
+                Ok(v) => v,
+                Err(_) => return Ok(None),
+            };
             let approved = resp["approved"].as_bool().unwrap_or(false);
             let reason = if approved {
                 GateReason::UserApproved
             } else {
                 GateReason::UserDenied
             };
-            Some((approved, reason))
+            Ok(Some((approved, reason)))
         }
         Err(_) => {
             // Shell not running — terminal fallback
-            terminal_fallback(req, level)
+            Ok(terminal_fallback(req, level))
         }
     }
 }
