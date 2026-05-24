@@ -13,7 +13,6 @@
 ///   - Agents wait synchronously for HAL response before proceeding
 ///   - Maximum wait: 30 seconds; after that, deny + log timeout_deny
 
-use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -187,12 +186,9 @@ impl HalDaemon {
             .set_nonblocking(false)
             .expect("Failed to configure listener");
 
-        for stream in listener.incoming() {
-            if !self.running.load(Ordering::Relaxed) {
-                break;
-            }
-            match stream {
-                Ok(s) => {
+        while self.running.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((s, _addr)) => {
                     let audit = self.audit_log.clone();
                     let notif = self.notification_socket.clone();
                     let ui = self.hal_ui_socket.clone();
