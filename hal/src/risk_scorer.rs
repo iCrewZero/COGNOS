@@ -1,710 +1,590 @@
-// ============================================================================
-// HAL — Risk Scorer
-// COGNOS/OS Human Approval Layer
-//
-// THIS FILE IS HUMAN-WRITTEN AND HUMAN-REVIEWED ONLY.
-// NO AI AUTHORSHIP. NO AI COMMITS.
-// This is the trust anchor. It cannot be reasoned around.
-// ============================================================================
+/// HAL Risk Scorer — full v1 formal model for COGNOS/OS.
+///
+/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship. CI enforces this.
+///
+/// Implements the formal risk model:
+///   R(A) = w1·Irreversibility(A) + w2·Scope(A) + w3·TrustContext(A)
+///          + w4·TimeAnomaly(A)   + w5·VibeCodeFlag(A)
+///          - w6·UserHistory(A)   - w7·PatternMatch(A)
+///
+/// All weights sum to 1.0. All component scores ∈ [0.0, 1.0].
+/// Result is clamped to [0.0, 1.0] and hard floors applied last.
 
+use chrono::{DateTime, Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-// ----------------------------------------------------------------------------
-// Enumerations
-// ----------------------------------------------------------------------------
+// ─── Component enums ──────────────────────────────────────────────────────────
 
-/// The category of action being proposed by an AI agent.
-/// Used to enforce hard floor rules regardless of computed score.
+/// How reversible the action is.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ActionCategory {
-    /// Open an application or file for viewing
-    OpenApp,
-    /// Move a file within the user's home directory
-    MoveFile,
-    /// Delete a file or directory (hard floor: 0.5)
-    DeleteFile,
-    /// Format a volume or partition (hard floor: 0.5)
-    FormatVolume,
-    /// Install a package or application
-    PackageInstall,
-    /// Read a file (no side effects)
-    ReadFile,
-    /// Write to a file in user home
-    WriteFile,
-    /// Modify system configuration
-    SystemConfig,
-    /// Change network settings
-    NetworkChange,
-    /// Any action touching kernel paths or modules (hard floor: 0.7)
-    KernelAdjacent,
-    /// Execute AI-generated code not yet human-reviewed (hard floor: 0.8)
-    AiGeneratedCode,
+pub enum IrreversibilityLevel {
+    /// Open app, read file — fully reversible.
+    FullyReversible,
+    /// Config change, moved file — reversible with effort.
+    ReversibleWithEffort,
+    /// Package install, permission grant — hard to reverse.
+    HardToReverse,
+    /// Delete, format, credential change — irreversible.
+    Irreversible,
 }
 
-/// The risk level determined from the final score.
-/// Maps directly to the user-facing response: silent, notify, confirm, or block.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum RiskLevel {
-    /// R ∈ [0.0, 0.3) — execute silently, write to audit log only
-    Silent,
-    /// R ∈ [0.3, 0.6) — toast notification with 5-second undo window
-    Notify,
-    /// R ∈ [0.6, 0.8) — dialog with plain-English explanation required
-    Confirm,
-    /// R ∈ [0.8, 1.0] — full breakdown, explicit approve/deny, mandatory audit entry
-    Block,
-}
-
-impl fmt::Display for RiskLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl IrreversibilityLevel {
+    fn score(&self) -> f32 {
         match self {
-            RiskLevel::Silent  => write!(f, "SILENT"),
-            RiskLevel::Notify  => write!(f, "NOTIFY"),
-            RiskLevel::Confirm => write!(f, "CONFIRM"),
-            RiskLevel::Block   => write!(f, "BLOCK"),
+            Self::FullyReversible      => 0.0,
+            Self::ReversibleWithEffort => 0.3,
+            Self::HardToReverse        => 0.7,
+            Self::Irreversible         => 1.0,
         }
     }
 }
 
-// ----------------------------------------------------------------------------
-// Input structs
-// ----------------------------------------------------------------------------
+/// How wide the blast radius of the action is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ScopeLevel {
+    /// Single file in user home.
+    SingleFileUserHome,
+    /// Multiple files, single directory.
+    MultipleFileSingleDir,
+    /// System-wide, multiple users.
+    SystemWide,
+    /// Kernel-level, hardware-level.
+    KernelLevel,
+}
 
-/// Everything HAL needs to know about the proposed action itself.
-/// Populated by the Multi-Agent Orchestrator before HAL is invoked.
+impl ScopeLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::SingleFileUserHome    => 0.0,
+            Self::MultipleFileSingleDir => 0.3,
+            Self::SystemWide            => 0.7,
+            Self::KernelLevel           => 1.0,
+        }
+    }
+}
+
+/// How trustworthy the source of the action is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TrustContextLevel {
+    /// Known app, established behavior, signed source.
+    KnownTrusted,
+    /// Known app, minor behavioral anomaly.
+    KnownAnomalous,
+    /// New app, unverified behavior.
+    NewApp,
+    /// Unknown binary, behavioral red flag, unsigned.
+    Unknown,
+}
+
+impl TrustContextLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::KnownTrusted   => 0.0,
+            Self::KnownAnomalous => 0.4,
+            Self::NewApp         => 0.7,
+            Self::Unknown        => 1.0,
+        }
+    }
+}
+
+/// Whether the action occurs at an unusual time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TimeAnomalyLevel {
+    /// Action within established time patterns.
+    Normal,
+    /// Action outside normal hours but not unprecedented.
+    UnusualHour,
+    /// Unusual time AND unusual scope combination.
+    UnusualTimeAndScope,
+}
+
+impl TimeAnomalyLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::Normal               => 0.0,
+            Self::UnusualHour          => 0.5,
+            Self::UnusualTimeAndScope  => 1.0,
+        }
+    }
+}
+
+/// Whether AI-generated code is involved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum VibeFlagLevel {
+    /// No AI-generated code involved.
+    None,
+    /// AI-generated code, not yet human-reviewed.
+    AiGeneratedUnreviewed,
+    /// AI-generated code touching kernel or HAL-adjacent paths.
+    AiGeneratedKernelAdjacent,
+}
+
+impl VibeFlagLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::None                    => 0.0,
+            Self::AiGeneratedUnreviewed   => 0.8,
+            Self::AiGeneratedKernelAdjacent => 1.0,
+        }
+    }
+}
+
+/// How many times the user has done this exact action before.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum UserHistoryLevel {
+    /// Never done before.
+    Never,
+    /// Done fewer than 5 times.
+    Rare,
+    /// Done more than 20 times with consistent context.
+    Frequent,
+    /// Done more than 100 times in identical context (routine).
+    Routine,
+}
+
+impl UserHistoryLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::Never    => 0.0,
+            Self::Rare     => 0.3,
+            Self::Frequent => 0.7,
+            Self::Routine  => 1.0,
+        }
+    }
+}
+
+/// How closely this matches a learned behavioral pattern.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PatternMatchLevel {
+    /// No matching learned pattern.
+    NoMatch,
+    /// Partial pattern match.
+    PartialMatch,
+    /// Exact pattern match with high confidence.
+    ExactMatch,
+}
+
+impl PatternMatchLevel {
+    fn score(&self) -> f32 {
+        match self {
+            Self::NoMatch      => 0.0,
+            Self::PartialMatch => 0.5,
+            Self::ExactMatch   => 1.0,
+        }
+    }
+}
+
+// ─── Input / output types ─────────────────────────────────────────────────────
+
+/// An action proposed by an agent, ready to be risk-scored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposedAction {
-    /// Human-readable description of what the agent wants to do
-    pub description: String,
-
-    /// The category — used for hard floor enforcement
-    pub category: ActionCategory,
-
-    /// Irreversibility score ∈ [0.0, 1.0]
-    /// 0.0 = fully reversible (open app)
-    /// 0.3 = reversible with effort (move file)
-    /// 0.7 = hard to reverse (package install)
-    /// 1.0 = irreversible (delete, format, credential change)
-    pub irreversibility: f32,
-
-    /// Scope score ∈ [0.0, 1.0]
-    /// 0.0 = single file in user home
-    /// 0.3 = multiple files, single directory
-    /// 0.7 = system-wide, multiple users
-    /// 1.0 = kernel-level, hardware-level
-    pub scope: f32,
-
-    /// Whether AI-generated code is involved and its review status
-    pub vibe_code: VibeCodeStatus,
-
-    /// Target path(s) of the action, for display and audit
-    pub targets: Vec<String>,
-}
-
-/// Tracks whether AI-generated code is involved in an action,
-/// and whether it has been reviewed by a human.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum VibeCodeStatus {
-    /// No AI-generated code involved
-    None,
-    /// AI-generated code present but not yet human-reviewed
-    UnreviewedAiCode,
-    /// AI-generated code touching kernel or HAL-adjacent paths (worst case)
-    AiCodeKernelAdjacent,
-    /// AI-generated code that has been reviewed and approved by a human
-    ReviewedAndApproved,
-}
-
-/// System context at the moment the action is proposed.
-/// HAL uses this to assess trust, timing, and behavioral history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemContext {
-    /// Trust level of the requesting agent/app ∈ [0.0, 1.0]
-    /// 0.0 = known app, established behavior, signed source
-    /// 0.4 = known app, minor behavioral anomaly
-    /// 0.7 = new app, unverified behavior
-    /// 1.0 = unknown binary, behavioral red flag, unsigned
-    pub trust_context: f32,
-
-    /// Whether this action is being requested outside the user's normal time patterns
+    /// The action name, e.g. "delete_file", "install_package".
+    pub action_type: String,
+    /// The target resource path or identifier.
+    pub target: String,
+    /// The agent proposing this action.
+    pub agent: String,
+    pub irreversibility: IrreversibilityLevel,
+    pub scope: ScopeLevel,
+    pub trust_context: TrustContextLevel,
     pub time_anomaly: TimeAnomalyLevel,
-
-    /// How many times this exact action has been taken in the same context
-    pub user_history_count: u32,
-
-    /// Whether this matches a learned behavioral pattern
+    pub vibe_flag: VibeFlagLevel,
+    pub user_history: UserHistoryLevel,
     pub pattern_match: PatternMatchLevel,
+    /// Whether this action targets kernel-adjacent paths.
+    pub is_kernel_adjacent: bool,
+    /// Whether the action is a delete operation.
+    pub is_delete: bool,
 }
 
-/// Describes how unusual the timing of this action is.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TimeAnomalyLevel {
-    /// Action is within the user's established time patterns
-    Normal,
-    /// Action is outside normal hours but not unprecedented
-    UnusualHour,
-    /// Unusual hour AND unusual scope combination — highest anomaly
-    UnusualHourAndScope,
+/// System context at the time of scoring.
+#[derive(Debug, Clone)]
+pub struct SystemContext {
+    pub current_time: DateTime<Utc>,
+    pub session_id: String,
 }
 
-/// Describes how well this action matches a known behavioral pattern.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PatternMatchLevel {
-    /// No matching learned pattern
-    NoMatch,
-    /// Partial pattern match
-    Partial,
-    /// Exact pattern match with high confidence
-    ExactHighConfidence,
+impl Default for SystemContext {
+    fn default() -> Self {
+        Self {
+            current_time: Utc::now(),
+            session_id: String::new(),
+        }
+    }
 }
 
-// ----------------------------------------------------------------------------
-// Output struct
-// ----------------------------------------------------------------------------
-
-/// The complete risk assessment produced by HAL for a proposed action.
-/// This struct drives the UI dialog shown to the user.
+/// The output of the risk scorer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskScore {
-    /// Final computed score ∈ [0.0, 1.0], after hard floor enforcement
+    /// Final score ∈ [0.0, 1.0].
     pub score: f32,
-
-    /// The risk level bucket derived from the score
+    /// The HAL level this score maps to.
     pub level: RiskLevel,
-
-    /// Individual component scores for auditability
-    pub components: ScoreComponents,
-
-    /// Whether a hard floor rule was applied (and which one)
-    pub floor_applied: Option<FloorRule>,
-
-    /// Plain-English explanation for display in confirmation dialogs
+    /// Plain-English explanation shown to the user in confirmation dialogs.
     pub explanation: String,
+    /// Scores of each component, for auditing.
+    pub components: ComponentScores,
 }
 
-/// Breakdown of each component's contribution to the final score.
-/// Stored for full auditability — user can inspect why any score was given.
+/// Individual component scores for transparency and audit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoreComponents {
+pub struct ComponentScores {
     pub irreversibility: f32,
     pub scope: f32,
     pub trust_context: f32,
     pub time_anomaly: f32,
-    pub vibe_code_flag: f32,
+    pub vibe_flag: f32,
     pub user_history: f32,
     pub pattern_match: f32,
-    /// The weighted sum before floor enforcement
-    pub raw_score: f32,
+    pub hard_floor_applied: bool,
+    pub hard_floor_reason: Option<String>,
 }
 
-/// Records which hard floor rule overrode the computed score, if any.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FloorRule {
-    DeleteAction,
-    KernelAdjacentAction,
-    AiGeneratedCodeUnreviewed,
+/// The four HAL response levels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RiskLevel {
+    /// [0.0, 0.3) — execute, write to audit log.
+    Silent,
+    /// [0.3, 0.6) — toast notification, 5s undo window.
+    Notify,
+    /// [0.6, 0.8) — dialog with plain-English explanation.
+    Confirm,
+    /// [0.8, 1.0] — full breakdown, explicit approve/deny, mandatory audit.
+    Block,
 }
 
-impl fmt::Display for FloorRule {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FloorRule::DeleteAction             => write!(f, "delete actions always score ≥ 0.5"),
-            FloorRule::KernelAdjacentAction     => write!(f, "kernel-adjacent actions always score ≥ 0.7"),
-            FloorRule::AiGeneratedCodeUnreviewed => write!(f, "unreviewed AI-generated code always scores ≥ 0.8"),
+impl RiskLevel {
+    fn from_score(score: f32) -> Self {
+        if score < 0.3 {
+            Self::Silent
+        } else if score < 0.6 {
+            Self::Notify
+        } else if score < 0.8 {
+            Self::Confirm
+        } else {
+            Self::Block
         }
     }
 }
 
-// ----------------------------------------------------------------------------
-// Weight constants
-// All weights must sum to exactly 1.0.
-// Positive weights increase risk. Negative weights reduce risk.
-// ----------------------------------------------------------------------------
+// ─── Weights ──────────────────────────────────────────────────────────────────
 
-/// Weight for Irreversibility component
+/// Formal model weights. Must sum to 1.0.
+/// Justification:
+///   w1 (irreversibility) = 0.25 — the single most important factor
+///   w2 (scope)           = 0.20 — blast radius matters almost as much
+///   w3 (trust_context)   = 0.20 — unverified source is a major risk signal
+///   w4 (time_anomaly)    = 0.10 — useful signal but not primary
+///   w5 (vibe_flag)       = 0.10 — AI code needs elevated scrutiny
+///   w6 (user_history)    = 0.10 — established routines reduce risk
+///   w7 (pattern_match)   = 0.05 — weakest signal, easily gamed without floors
 const W1_IRREVERSIBILITY: f32 = 0.25;
-/// Weight for Scope component
-const W2_SCOPE: f32 = 0.20;
-/// Weight for TrustContext component
-const W3_TRUST_CONTEXT: f32 = 0.20;
-/// Weight for TimeAnomaly component
-const W4_TIME_ANOMALY: f32 = 0.10;
-/// Weight for VibeCodeFlag component
-const W5_VIBE_CODE: f32 = 0.10;
-/// Weight for UserHistory component (risk-reducing)
-const W6_USER_HISTORY: f32 = 0.10;
-/// Weight for PatternMatch component (risk-reducing)
-const W7_PATTERN_MATCH: f32 = 0.05;
+const W2_SCOPE:           f32 = 0.20;
+const W3_TRUST_CONTEXT:   f32 = 0.20;
+const W4_TIME_ANOMALY:    f32 = 0.10;
+const W5_VIBE_FLAG:       f32 = 0.10;
+const W6_USER_HISTORY:    f32 = 0.10;
+const W7_PATTERN_MATCH:   f32 = 0.05;
 
-// Compile-time sanity check: weights must sum to 1.0
-// (positive minus negative = net formula coverage)
-// W1+W2+W3+W4+W5 = 0.85, W6+W7 = 0.15, net = 0.85-0.15 = 0.70
-// The formula is risk_raising - risk_reducing, intentionally asymmetric
-// toward caution. Full weight sum: 0.25+0.20+0.20+0.10+0.10+0.10+0.05 = 1.00 ✓
+// Compile-time assertion: weights sum to 1.0 within floating-point tolerance.
+const _: () = {
+    let sum = W1_IRREVERSIBILITY + W2_SCOPE + W3_TRUST_CONTEXT
+        + W4_TIME_ANOMALY + W5_VIBE_FLAG + W6_USER_HISTORY + W7_PATTERN_MATCH;
+    // f32 const arithmetic: check within 0.001
+    assert!((sum - 1.0_f32).abs() < 0.001_f32);
+};
 
-// ----------------------------------------------------------------------------
-// Score component functions
-// ----------------------------------------------------------------------------
+// ─── Scorer ───────────────────────────────────────────────────────────────────
 
-/// Maps the raw irreversibility value to its score contribution.
-/// Input is already a [0.0, 1.0] float from ProposedAction.
-/// We clamp defensively in case of upstream error.
-fn score_irreversibility(value: f32) -> f32 {
-    value.clamp(0.0, 1.0)
-}
-
-/// Maps scope value to its score contribution.
-/// Clamped defensively.
-fn score_scope(value: f32) -> f32 {
-    value.clamp(0.0, 1.0)
-}
-
-/// Maps trust_context to its score contribution.
-/// Higher trust_context = less known/trusted = higher risk.
-fn score_trust_context(value: f32) -> f32 {
-    value.clamp(0.0, 1.0)
-}
-
-/// Converts TimeAnomalyLevel enum to its numeric score.
-/// 0.0 = normal, 0.5 = unusual hour, 1.0 = unusual hour + scope
-fn score_time_anomaly(anomaly: &TimeAnomalyLevel) -> f32 {
-    match anomaly {
-        TimeAnomalyLevel::Normal               => 0.0,
-        TimeAnomalyLevel::UnusualHour          => 0.5,
-        TimeAnomalyLevel::UnusualHourAndScope  => 1.0,
-    }
-}
-
-/// Converts VibeCodeStatus to its numeric score.
-/// 0.0 = no AI code, 0.8 = unreviewed, 1.0 = kernel-adjacent AI code
-fn score_vibe_code(status: &VibeCodeStatus) -> f32 {
-    match status {
-        VibeCodeStatus::None                  => 0.0,
-        VibeCodeStatus::ReviewedAndApproved   => 0.0,
-        VibeCodeStatus::UnreviewedAiCode      => 0.8,
-        VibeCodeStatus::AiCodeKernelAdjacent  => 1.0,
-    }
-}
-
-/// Converts user history count to a risk-reducing score.
-/// More repetitions = more familiarity = lower risk contribution.
-/// 0.0 = never done (no history to reduce risk)
-/// 0.3 = done < 5 times
-/// 0.7 = done > 20 times
-/// 1.0 = done > 100 times in identical context (routine)
-fn score_user_history(count: u32) -> f32 {
-    match count {
-        0           => 0.0,
-        1..=4       => 0.3,
-        5..=19      => 0.5,
-        20..=99     => 0.7,
-        _           => 1.0,
-    }
-}
-
-/// Converts PatternMatchLevel to a risk-reducing score.
-/// Exact high-confidence pattern match = highest risk reduction.
-fn score_pattern_match(level: &PatternMatchLevel) -> f32 {
-    match level {
-        PatternMatchLevel::NoMatch             => 0.0,
-        PatternMatchLevel::Partial             => 0.5,
-        PatternMatchLevel::ExactHighConfidence => 1.0,
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Hard floor enforcement
-// ----------------------------------------------------------------------------
-
-/// Applies hard floor rules that override the computed score.
-/// These rules are non-negotiable and cannot be tuned by user calibration.
+/// Compute the risk score R(A) for a proposed action.
 ///
-/// Returns (final_score, Option<FloorRule>) — the floor rule if one was applied.
-fn apply_hard_floors(
-    category: &ActionCategory,
-    vibe_code: &VibeCodeStatus,
-    computed: f32,
-) -> (f32, Option<FloorRule>) {
+/// This is the entry point for all HAL scoring decisions.
+/// Hard floor rules are applied after the formula and cannot be overridden.
+pub fn score_action(action: &ProposedAction, _context: &SystemContext) -> RiskScore {
+    // Component raw scores
+    let s_irreversibility = action.irreversibility.score();
+    let s_scope           = action.scope.score();
+    let s_trust_context   = action.trust_context.score();
+    let s_time_anomaly    = action.time_anomaly.score();
+    let s_vibe_flag       = action.vibe_flag.score();
+    let s_user_history    = action.user_history.score();
+    let s_pattern_match   = action.pattern_match.score();
 
-    // AI-generated unreviewed code: always block-territory minimum
-    // Check this first — it is the strictest floor
-    match vibe_code {
-        VibeCodeStatus::UnreviewedAiCode | VibeCodeStatus::AiCodeKernelAdjacent => {
-            let floor = 0.8_f32;
-            if computed < floor {
-                return (floor, Some(FloorRule::AiGeneratedCodeUnreviewed));
-            }
-        }
-        _ => {}
-    }
+    // Apply the formal formula
+    let raw_score = W1_IRREVERSIBILITY * s_irreversibility
+        + W2_SCOPE           * s_scope
+        + W3_TRUST_CONTEXT   * s_trust_context
+        + W4_TIME_ANOMALY    * s_time_anomaly
+        + W5_VIBE_FLAG       * s_vibe_flag
+        - W6_USER_HISTORY    * s_user_history
+        - W7_PATTERN_MATCH   * s_pattern_match;
 
-    // Kernel-adjacent actions: confirm-territory minimum
-    if *category == ActionCategory::KernelAdjacent {
-        let floor = 0.7_f32;
-        if computed < floor {
-            return (floor, Some(FloorRule::KernelAdjacentAction));
+    // Clamp to [0.0, 1.0] before applying hard floors
+    let mut score = raw_score.clamp(0.0, 1.0);
+
+    // Hard floors — these cannot be overridden by any weighting or history.
+    // Security justification: these actions have catastrophic failure modes
+    // that no amount of established trust can fully mitigate.
+    let mut floor_applied = false;
+    let mut floor_reason: Option<String> = None;
+
+    if action.is_delete {
+        if score < 0.5 {
+            score = 0.5;
+            floor_applied = true;
+            floor_reason = Some("Hard floor: delete actions always ≥ 0.5 regardless of history".to_string());
         }
     }
 
-    // Delete or format: never silently execute
-    if matches!(category, ActionCategory::DeleteFile | ActionCategory::FormatVolume) {
-        let floor = 0.5_f32;
-        if computed < floor {
-            return (floor, Some(FloorRule::DeleteAction));
+    if action.is_kernel_adjacent || action.scope == ScopeLevel::KernelLevel {
+        if score < 0.7 {
+            score = 0.7;
+            floor_applied = true;
+            floor_reason = Some("Hard floor: kernel-adjacent actions always ≥ 0.7".to_string());
         }
     }
 
-    (computed, None)
-}
+    if matches!(action.vibe_flag, VibeFlagLevel::AiGeneratedUnreviewed | VibeFlagLevel::AiGeneratedKernelAdjacent) {
+        if score < 0.8 {
+            score = 0.8;
+            floor_applied = true;
+            floor_reason = Some("Hard floor: AI-generated unreviewed code always ≥ 0.8".to_string());
+        }
+    }
 
-// ----------------------------------------------------------------------------
-// Main scoring function
-// ----------------------------------------------------------------------------
-
-/// Computes the HAL risk score for a proposed action.
-///
-/// Formula:
-///   R(A) = w1·Irreversibility + w2·Scope + w3·TrustContext
-///         + w4·TimeAnomaly + w5·VibeCodeFlag
-///         - w6·UserHistory - w7·PatternMatch
-///
-/// All weights sum to 1.0. Result is clamped to [0.0, 1.0].
-/// Hard floor rules are applied after the formula, and override the result
-/// when they produce a higher minimum score.
-///
-/// This function is deterministic and has no side effects.
-/// The same inputs always produce the same output.
-pub fn score_action(action: &ProposedAction, context: &SystemContext) -> RiskScore {
-    // Compute each component score
-    let irreversibility = score_irreversibility(action.irreversibility);
-    let scope           = score_scope(action.scope);
-    let trust_context   = score_trust_context(context.trust_context);
-    let time_anomaly    = score_time_anomaly(&context.time_anomaly);
-    let vibe_code_flag  = score_vibe_code(&action.vibe_code);
-    let user_history    = score_user_history(context.user_history_count);
-    let pattern_match   = score_pattern_match(&context.pattern_match);
-
-    // Apply the weighted formula
-    let raw = (W1_IRREVERSIBILITY * irreversibility)
-            + (W2_SCOPE           * scope)
-            + (W3_TRUST_CONTEXT   * trust_context)
-            + (W4_TIME_ANOMALY    * time_anomaly)
-            + (W5_VIBE_CODE       * vibe_code_flag)
-            - (W6_USER_HISTORY    * user_history)
-            - (W7_PATTERN_MATCH   * pattern_match);
-
-    // Clamp before floor enforcement (formula can theoretically go negative)
-    let clamped = raw.clamp(0.0, 1.0);
-
-    // Apply hard floor rules
-    let (final_score, floor_applied) = apply_hard_floors(
-        &action.category,
-        &action.vibe_code,
-        clamped,
-    );
-
-    let components = ScoreComponents {
-        irreversibility,
-        scope,
-        trust_context,
-        time_anomaly,
-        vibe_code_flag,
-        user_history,
-        pattern_match,
-        raw_score: clamped,
-    };
-
-    let level = risk_level_from_score(final_score);
+    let level = RiskLevel::from_score(score);
     let explanation = describe_score_internal(
-        final_score,
-        &level,
-        &components,
-        &floor_applied,
-        action,
+        action, score, &level,
+        s_irreversibility, s_scope, s_trust_context,
+        s_time_anomaly, s_vibe_flag, s_user_history, s_pattern_match,
+        floor_applied, floor_reason.as_deref(),
     );
 
     RiskScore {
-        score: final_score,
+        score,
         level,
-        components,
-        floor_applied,
         explanation,
+        components: ComponentScores {
+            irreversibility:     s_irreversibility,
+            scope:               s_scope,
+            trust_context:       s_trust_context,
+            time_anomaly:        s_time_anomaly,
+            vibe_flag:           s_vibe_flag,
+            user_history:        s_user_history,
+            pattern_match:       s_pattern_match,
+            hard_floor_applied:  floor_applied,
+            hard_floor_reason:   floor_reason,
+        },
     }
 }
 
-/// Maps a numeric score to its RiskLevel bucket.
-/// Thresholds are strict and match the formal specification exactly.
-pub fn risk_level_from_score(score: f32) -> RiskLevel {
-    if score < 0.3 {
-        RiskLevel::Silent
-    } else if score < 0.6 {
-        RiskLevel::Notify
-    } else if score < 0.8 {
-        RiskLevel::Confirm
-    } else {
-        RiskLevel::Block
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Human-readable explanation
-// ----------------------------------------------------------------------------
-
-/// Generates a plain-English explanation of the risk score.
-/// This text is shown directly to the user in HAL dialogs.
+/// Generate a plain-English explanation of the score for the user dialog.
 ///
-/// The explanation must be:
-/// - Honest about which factors raised or lowered the score
-/// - Specific about what will happen and why approval is needed
-/// - Free of jargon — written for a non-technical user
+/// This explanation is what appears in HAL's confirmation and block dialogs.
+/// It must be concise, honest, and actionable.
 pub fn describe_score(score: &RiskScore) -> String {
     score.explanation.clone()
 }
 
-/// Internal implementation of score description, called during scoring.
 fn describe_score_internal(
-    final_score: f32,
-    level: &RiskLevel,
-    components: &ScoreComponents,
-    floor_applied: &Option<FloorRule>,
     action: &ProposedAction,
+    score: f32,
+    level: &RiskLevel,
+    s_irrev: f32, s_scope: f32, s_trust: f32,
+    s_time: f32, s_vibe: f32, s_hist: f32, s_pat: f32,
+    floor_applied: bool, floor_reason: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
-    // What is being done
-    parts.push(format!("Action: {}", action.description));
+    // Lead with the action and level
+    let level_label = match level {
+        RiskLevel::Silent  => "auto-approved",
+        RiskLevel::Notify  => "notification sent",
+        RiskLevel::Confirm => "requires confirmation",
+        RiskLevel::Block   => "blocked — explicit approval required",
+    };
+    parts.push(format!(
+        "{} on '{}': {} (score {:.2})",
+        action.action_type, action.target, level_label, score
+    ));
 
-    // Why the score is what it is — only mention factors that meaningfully contributed
-    let mut risk_factors: Vec<&str> = Vec::new();
-    let mut reducing_factors: Vec<&str> = Vec::new();
-
-    if components.irreversibility >= 0.7 {
-        risk_factors.push("this action is difficult or impossible to reverse");
-    } else if components.irreversibility >= 0.3 {
-        risk_factors.push("this action requires effort to undo");
+    // Explain significant positive contributors (risk-raising)
+    if s_irrev >= 0.7 {
+        parts.push("This action is difficult or impossible to reverse.".to_string());
+    } else if s_irrev >= 0.3 {
+        parts.push("Reversible, but not trivially so.".to_string());
     }
 
-    if components.scope >= 0.7 {
-        risk_factors.push("it affects system-wide or kernel-level resources");
-    } else if components.scope >= 0.3 {
-        risk_factors.push("it affects multiple files or directories");
+    if s_scope >= 0.7 {
+        parts.push("Affects system-wide or multiple-user scope.".to_string());
     }
 
-    if components.trust_context >= 0.7 {
-        risk_factors.push("the requesting application is unknown or unverified");
-    } else if components.trust_context >= 0.4 {
-        risk_factors.push("the requesting application is showing unusual behavior");
+    if s_trust >= 0.7 {
+        parts.push("Source is new or unverified.".to_string());
     }
 
-    if components.time_anomaly >= 1.0 {
-        risk_factors.push("this is happening at an unusual time with unusual scope");
-    } else if components.time_anomaly >= 0.5 {
-        risk_factors.push("this is happening outside your normal usage hours");
+    if s_vibe >= 0.8 {
+        parts.push("This action involves AI-generated code that has not been human-reviewed.".to_string());
     }
 
-    if components.vibe_code_flag >= 1.0 {
-        risk_factors.push("AI-generated code is touching kernel-level paths — this has never been human-reviewed");
-    } else if components.vibe_code_flag >= 0.8 {
-        risk_factors.push("AI-generated code is involved and has not been reviewed by a human");
+    if s_time >= 0.5 {
+        parts.push("This action is occurring outside your normal usage patterns.".to_string());
     }
 
-    if components.user_history >= 0.7 {
-        reducing_factors.push("you have done this many times before in the same context");
-    } else if components.user_history >= 0.3 {
-        reducing_factors.push("you have done this a few times before");
-    }
-
-    if components.pattern_match >= 1.0 {
-        reducing_factors.push("this matches one of your established behavioral patterns exactly");
-    } else if components.pattern_match >= 0.5 {
-        reducing_factors.push("this partially matches a known pattern");
-    }
-
-    if !risk_factors.is_empty() {
-        parts.push(format!("Risk factors: {}.", risk_factors.join("; ")));
-    }
-
-    if !reducing_factors.is_empty() {
-        parts.push(format!("Mitigating factors: {}.", reducing_factors.join("; ")));
-    }
-
-    // Floor rule explanation if applied
-    if let Some(floor) = floor_applied {
+    // Explain significant negative contributors (trust-reducing risk)
+    if s_hist >= 0.7 {
         parts.push(format!(
-            "Note: score was raised to {:.2} because {}.",
-            final_score, floor
+            "You have done this {} times before in similar context.",
+            if s_hist >= 1.0 { "over 100" } else { "over 20" }
         ));
     }
 
-    // What happens next based on level
-    let action_desc = match level {
-        RiskLevel::Silent  => "This action will proceed without interruption.".to_string(),
-        RiskLevel::Notify  => "You will see a notification. You have 5 seconds to undo.".to_string(),
-        RiskLevel::Confirm => "Your explicit approval is required before this proceeds.".to_string(),
-        RiskLevel::Block   => {
-            format!(
-                "This action is BLOCKED (score: {:.2}). You must explicitly approve or deny it. \
-                 This decision will be recorded in your audit log.",
-                final_score
-            )
+    if floor_applied {
+        if let Some(reason) = floor_reason {
+            parts.push(format!("Note: {}", reason));
         }
-    };
-    parts.push(action_desc);
+    }
 
-    parts.join(" | ")
+    parts.join(" ")
 }
 
-// ----------------------------------------------------------------------------
-// Tests
-// ----------------------------------------------------------------------------
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn routine_action() -> ProposedAction {
+    fn ctx() -> SystemContext {
+        SystemContext::default()
+    }
+
+    fn base_action() -> ProposedAction {
         ProposedAction {
-            description: "Open VSCode".to_string(),
-            category: ActionCategory::OpenApp,
-            irreversibility: 0.0,
-            scope: 0.0,
-            vibe_code: VibeCodeStatus::None,
-            targets: vec!["/usr/bin/code".to_string()],
-        }
-    }
-
-    fn routine_context() -> SystemContext {
-        SystemContext {
-            trust_context: 0.0,
+            action_type: "open_file".to_string(),
+            target: "~/motor.py".to_string(),
+            agent: "file".to_string(),
+            irreversibility: IrreversibilityLevel::FullyReversible,
+            scope: ScopeLevel::SingleFileUserHome,
+            trust_context: TrustContextLevel::KnownTrusted,
             time_anomaly: TimeAnomalyLevel::Normal,
-            user_history_count: 150,
-            pattern_match: PatternMatchLevel::ExactHighConfidence,
+            vibe_flag: VibeFlagLevel::None,
+            user_history: UserHistoryLevel::Routine,
+            pattern_match: PatternMatchLevel::ExactMatch,
+            is_kernel_adjacent: false,
+            is_delete: false,
         }
     }
 
     #[test]
-    fn test_routine_open_app_is_silent() {
-        let score = score_action(&routine_action(), &routine_context());
-        assert_eq!(score.level, RiskLevel::Silent, "Routine app open should be silent");
-        assert!(score.score < 0.3);
+    fn routine_open_file_is_silent() {
+        let score = score_action(&base_action(), &ctx());
+        assert_eq!(score.level, RiskLevel::Silent, "score={}", score.score);
     }
 
     #[test]
-    fn test_delete_floor_enforced() {
-        let action = ProposedAction {
-            description: "Delete ~/Documents/report.pdf".to_string(),
-            category: ActionCategory::DeleteFile,
-            irreversibility: 1.0,
-            scope: 0.0,
-            vibe_code: VibeCodeStatus::None,
-            targets: vec!["~/Documents/report.pdf".to_string()],
-        };
-        // Even with perfect history, delete must be >= 0.5
-        let context = routine_context();
-        let score = score_action(&action, &context);
-        assert!(score.score >= 0.5, "Delete floor must be enforced: got {}", score.score);
-        assert!(score.floor_applied.is_some());
+    fn delete_hard_floor_respected() {
+        let mut action = base_action();
+        action.action_type = "delete_file".to_string();
+        action.irreversibility = IrreversibilityLevel::Irreversible;
+        action.is_delete = true;
+        // Give maximum history to try to bring score below floor
+        action.user_history = UserHistoryLevel::Routine;
+        action.pattern_match = PatternMatchLevel::ExactMatch;
+
+        let score = score_action(&action, &ctx());
+        assert!(score.score >= 0.5, "delete floor violated: score={}", score.score);
+        assert!(score.level != RiskLevel::Silent, "delete must not be Silent");
+        assert!(score.components.hard_floor_applied);
     }
 
     #[test]
-    fn test_kernel_adjacent_floor_enforced() {
-        let action = ProposedAction {
-            description: "Load kernel module".to_string(),
-            category: ActionCategory::KernelAdjacent,
-            irreversibility: 0.3,
-            scope: 0.3,
-            vibe_code: VibeCodeStatus::None,
-            targets: vec!["/lib/modules/test.ko".to_string()],
-        };
-        let context = routine_context();
-        let score = score_action(&action, &context);
-        assert!(score.score >= 0.7, "Kernel floor must be enforced: got {}", score.score);
-        assert!(score.floor_applied.is_some());
+    fn kernel_floor_respected() {
+        let mut action = base_action();
+        action.scope = ScopeLevel::KernelLevel;
+        action.is_kernel_adjacent = true;
+        action.user_history = UserHistoryLevel::Routine;
+
+        let score = score_action(&action, &ctx());
+        assert!(score.score >= 0.7, "kernel floor violated: score={}", score.score);
     }
 
     #[test]
-    fn test_unreviewed_ai_code_floor_enforced() {
-        let action = ProposedAction {
-            description: "Run AI-generated script".to_string(),
-            category: ActionCategory::WriteFile,
-            irreversibility: 0.0,
-            scope: 0.0,
-            vibe_code: VibeCodeStatus::UnreviewedAiCode,
-            targets: vec!["~/scripts/gen.sh".to_string()],
-        };
-        let context = routine_context();
-        let score = score_action(&action, &context);
-        assert!(score.score >= 0.8, "AI code floor must be enforced: got {}", score.score);
+    fn ai_unreviewed_floor_respected() {
+        let mut action = base_action();
+        action.vibe_flag = VibeFlagLevel::AiGeneratedUnreviewed;
+        action.user_history = UserHistoryLevel::Routine;
+        action.pattern_match = PatternMatchLevel::ExactMatch;
+
+        let score = score_action(&action, &ctx());
+        assert!(score.score >= 0.8, "AI code floor violated: score={}", score.score);
         assert_eq!(score.level, RiskLevel::Block);
     }
 
     #[test]
-    fn test_high_risk_unknown_binary_blocks() {
-        let action = ProposedAction {
-            description: "Execute unknown binary as root".to_string(),
-            category: ActionCategory::AiGeneratedCode,
-            irreversibility: 1.0,
-            scope: 1.0,
-            vibe_code: VibeCodeStatus::AiCodeKernelAdjacent,
-            targets: vec!["/tmp/suspicious_binary".to_string()],
-        };
-        let context = SystemContext {
-            trust_context: 1.0,
-            time_anomaly: TimeAnomalyLevel::UnusualHourAndScope,
-            user_history_count: 0,
-            pattern_match: PatternMatchLevel::NoMatch,
-        };
-        let score = score_action(&action, &context);
+    fn unknown_binary_scores_high() {
+        let mut action = base_action();
+        action.trust_context = TrustContextLevel::Unknown;
+        action.vibe_flag = VibeFlagLevel::AiGeneratedKernelAdjacent;
+        action.scope = ScopeLevel::KernelLevel;
+        action.is_kernel_adjacent = true;
+
+        let score = score_action(&action, &ctx());
         assert_eq!(score.level, RiskLevel::Block);
         assert!(score.score >= 0.8);
     }
 
     #[test]
-    fn test_score_is_deterministic() {
-        let action = routine_action();
-        let context = routine_context();
-        let s1 = score_action(&action, &context);
-        let s2 = score_action(&action, &context);
-        assert_eq!(s1.score, s2.score, "Score must be deterministic");
+    fn score_always_in_range() {
+        // Worst possible action
+        let worst = ProposedAction {
+            action_type: "format_disk".to_string(),
+            target: "/dev/sda".to_string(),
+            agent: "unknown".to_string(),
+            irreversibility: IrreversibilityLevel::Irreversible,
+            scope: ScopeLevel::KernelLevel,
+            trust_context: TrustContextLevel::Unknown,
+            time_anomaly: TimeAnomalyLevel::UnusualTimeAndScope,
+            vibe_flag: VibeFlagLevel::AiGeneratedKernelAdjacent,
+            user_history: UserHistoryLevel::Never,
+            pattern_match: PatternMatchLevel::NoMatch,
+            is_kernel_adjacent: true,
+            is_delete: true,
+        };
+        let score = score_action(&worst, &ctx());
+        assert!((0.0..=1.0).contains(&score.score));
+
+        // Best possible action
+        let best = base_action();
+        let score = score_action(&best, &ctx());
+        assert!((0.0..=1.0).contains(&score.score));
     }
 
     #[test]
-    fn test_score_always_in_range() {
-        // Adversarial: maximum risk raising values
-        let action = ProposedAction {
-            description: "worst case".to_string(),
-            category: ActionCategory::DeleteFile,
-            irreversibility: 1.0,
-            scope: 1.0,
-            vibe_code: VibeCodeStatus::AiCodeKernelAdjacent,
-            targets: vec![],
-        };
-        let context = SystemContext {
-            trust_context: 1.0,
-            time_anomaly: TimeAnomalyLevel::UnusualHourAndScope,
-            user_history_count: 0,
-            pattern_match: PatternMatchLevel::NoMatch,
-        };
-        let score = score_action(&action, &context);
-        assert!(score.score >= 0.0 && score.score <= 1.0);
+    fn explanation_is_non_empty() {
+        let score = score_action(&base_action(), &ctx());
+        assert!(!score.explanation.is_empty());
+        assert!(score.explanation.contains("open_file") || score.explanation.contains("motor.py"));
+    }
 
-        // Adversarial: maximum risk reduction
-        let safe_action = ProposedAction {
-            description: "safe case".to_string(),
-            category: ActionCategory::ReadFile,
-            irreversibility: 0.0,
-            scope: 0.0,
-            vibe_code: VibeCodeStatus::ReviewedAndApproved,
-            targets: vec![],
-        };
-        let safe_context = SystemContext {
-            trust_context: 0.0,
-            time_anomaly: TimeAnomalyLevel::Normal,
-            user_history_count: 999,
-            pattern_match: PatternMatchLevel::ExactHighConfidence,
-        };
-        let safe_score = score_action(&safe_action, &safe_context);
-        assert!(safe_score.score >= 0.0 && safe_score.score <= 1.0);
+    #[test]
+    fn weights_sum_to_one() {
+        let sum = W1_IRREVERSIBILITY + W2_SCOPE + W3_TRUST_CONTEXT
+            + W4_TIME_ANOMALY + W5_VIBE_FLAG + W6_USER_HISTORY + W7_PATTERN_MATCH;
+        assert!((sum - 1.0).abs() < 0.001, "Weights sum to {}", sum);
+    }
+
+    #[test]
+    fn higher_history_reduces_score() {
+        let mut low_hist = base_action();
+        low_hist.user_history = UserHistoryLevel::Never;
+
+        let mut high_hist = base_action();
+        high_hist.user_history = UserHistoryLevel::Routine;
+
+        // Must not involve delete (floor would obscure the comparison)
+        let score_low  = score_action(&low_hist,  &ctx()).score;
+        let score_high = score_action(&high_hist, &ctx()).score;
+        assert!(score_high <= score_low, "Higher history should reduce or equal score");
     }
 }
