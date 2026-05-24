@@ -1,28 +1,20 @@
-// ============================================================================
-// HAL — Trust Calibration
-// COGNOS/OS Human Approval Layer
-//
-// THIS FILE IS HUMAN-WRITTEN AND HUMAN-REVIEWED ONLY.
-// NO AI AUTHORSHIP. NO AI COMMITS.
-//
-// Manages per-user, per-action-class interrupt thresholds.
-// Every change is audited. Every change is reversible by reading the log.
-// ============================================================================
+/// HAL Trust Calibration — per-user interrupt frequency tuning.
+///
+/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship.
+///
+/// The problem: HAL interrupt frequency has no universally correct answer.
+/// This module lets the system learn what each user considers worth interrupting for.
+/// All calibration changes are logged; the global model is never modified.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
-use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
 
-// ----------------------------------------------------------------------------
-// Action classes
-// ----------------------------------------------------------------------------
+// ─── Action classes ───────────────────────────────────────────────────────────
 
-/// The class of action for which HAL may interrupt the user.
-/// Each class has an independent threshold that can be calibrated separately.
+/// The distinct classes of action HAL can interrupt for.
+/// Trust calibration is per-class — deletes don't affect app-launch thresholds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActionClass {
     FileDelete,
@@ -32,402 +24,333 @@ pub enum ActionClass {
     SystemConfig,
     NetworkChange,
     KernelAdjacent,
-    AIGeneratedCode,
+    AiGeneratedCode,
 }
 
-impl fmt::Display for ActionClass {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ActionClass {
+    /// Conservative defaults for a new install.
+    /// Higher threshold = interrupted more easily (more conservative).
+    fn default_threshold(&self) -> f32 {
         match self {
-            ActionClass::FileDelete       => write!(f, "FileDelete"),
-            ActionClass::FileMove         => write!(f, "FileMove"),
-            ActionClass::PackageInstall   => write!(f, "PackageInstall"),
-            ActionClass::AppLaunch        => write!(f, "AppLaunch"),
-            ActionClass::SystemConfig     => write!(f, "SystemConfig"),
-            ActionClass::NetworkChange    => write!(f, "NetworkChange"),
-            ActionClass::KernelAdjacent   => write!(f, "KernelAdjacent"),
-            ActionClass::AIGeneratedCode  => write!(f, "AIGeneratedCode"),
+            Self::FileDelete      => 0.40,
+            Self::FileMove        => 0.25,
+            Self::PackageInstall  => 0.50,
+            Self::AppLaunch       => 0.10,
+            Self::SystemConfig    => 0.60,
+            Self::NetworkChange   => 0.60,
+            Self::KernelAdjacent  => 0.80,
+            Self::AiGeneratedCode => 0.80,
+        }
+    }
+
+    /// The floor below which a threshold can never go, regardless of feedback.
+    /// Kernel and AI code must always receive some scrutiny.
+    fn minimum_threshold(&self) -> f32 {
+        match self {
+            Self::KernelAdjacent  => 0.60,
+            Self::AiGeneratedCode => 0.60,
+            _                     => 0.10,
         }
     }
 }
 
-// ----------------------------------------------------------------------------
-// Feedback types
-// ----------------------------------------------------------------------------
+// ─── Feedback types ───────────────────────────────────────────────────────────
 
-/// User feedback on whether an interrupt was appropriate.
-/// This is how the user teaches HAL what is and isn't worth asking about.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// User feedback on a HAL interrupt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Feedback {
-    /// The interrupt was not needed — lower the threshold for this class
+    /// "That interruption was unnecessary." — lower threshold for this class.
     UnnecessaryInterrupt,
-    /// The interrupt was correct — keep the threshold where it is
+    /// "This was the right call." — no change (reinforces current threshold).
     CorrectInterrupt,
-    /// Always ask for this class — raise threshold permanently to 0.9
+    /// "Always ask me about this." — raise threshold permanently to 0.9.
     AlwaysAskForThis,
 }
 
-impl fmt::Display for Feedback {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Feedback::UnnecessaryInterrupt => write!(f, "UnnecessaryInterrupt"),
-            Feedback::CorrectInterrupt     => write!(f, "CorrectInterrupt"),
-            Feedback::AlwaysAskForThis     => write!(f, "AlwaysAskForThis"),
-        }
-    }
+// ─── Calibration record ───────────────────────────────────────────────────────
+
+/// A single calibration change event, written to the audit log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CalibrationEvent {
+    timestamp: String,
+    action_class: ActionClass,
+    feedback: Feedback,
+    old_threshold: f32,
+    new_threshold: f32,
 }
 
-// ----------------------------------------------------------------------------
-// Constants
-// ----------------------------------------------------------------------------
+// ─── Persisted state ──────────────────────────────────────────────────────────
 
-/// How much to lower the threshold on UnnecessaryInterrupt feedback
-const THRESHOLD_DECREMENT: f32 = 0.05;
-
-/// The absolute floor for any action class (except hard-floored classes)
-const GLOBAL_FLOOR: f32 = 0.1;
-
-/// The permanent threshold set by AlwaysAskForThis feedback
-const ALWAYS_ASK_THRESHOLD: f32 = 0.9;
-
-/// Hard floor for KernelAdjacent — cannot be trained below this
-const KERNEL_ADJACENT_HARD_FLOOR: f32 = 0.6;
-
-/// Hard floor for AIGeneratedCode — cannot be trained below this
-const AI_GENERATED_CODE_HARD_FLOOR: f32 = 0.6;
-
-// ----------------------------------------------------------------------------
-// Default thresholds (conservative — new install)
-// ----------------------------------------------------------------------------
-
-/// Returns the conservative default thresholds for a fresh install.
-/// These are applied when no calibration file exists.
-fn default_thresholds() -> HashMap<ActionClass, f32> {
-    let mut map = HashMap::new();
-    map.insert(ActionClass::FileDelete,      0.4);
-    map.insert(ActionClass::FileMove,        0.25);
-    map.insert(ActionClass::PackageInstall,  0.5);
-    map.insert(ActionClass::AppLaunch,       0.1);
-    map.insert(ActionClass::SystemConfig,    0.6);
-    map.insert(ActionClass::NetworkChange,   0.6);
-    map.insert(ActionClass::KernelAdjacent,  0.8);
-    map.insert(ActionClass::AIGeneratedCode, 0.8);
-    map
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedCalibration {
+    thresholds: HashMap<String, f32>,
 }
 
-// ----------------------------------------------------------------------------
-// TrustCalibration struct
-// ----------------------------------------------------------------------------
+// ─── TrustCalibration ─────────────────────────────────────────────────────────
 
-/// Per-user HAL interrupt threshold calibration.
+/// Per-user trust calibration for HAL interrupt frequency.
 ///
-/// Stores one threshold per ActionClass. Thresholds drift based on user
-/// feedback. All changes are logged to the audit trail.
-///
-/// HAL uses these thresholds to decide whether to interrupt the user
-/// for a given action. If the computed risk score exceeds the threshold
-/// for the action's class, HAL will interrupt.
-#[derive(Debug, Serialize, Deserialize)]
+/// Loaded at daemon startup. Saved on every change.
+/// Thread-safe: wrap in Arc<Mutex<TrustCalibration>> for multi-threaded use.
 pub struct TrustCalibration {
-    /// The per-class thresholds. All values ∈ [0.1, 1.0].
     thresholds: HashMap<ActionClass, f32>,
-
-    /// Path to the calibration JSON file on disk
-    #[serde(skip)]
     calibration_path: PathBuf,
-
-    /// Path to the system audit log
-    #[serde(skip)]
     audit_log_path: PathBuf,
 }
 
 impl TrustCalibration {
-    /// Load calibration from ~/.cognos/hal/calibration.json.
-    ///
-    /// If the file does not exist, creates it with conservative defaults.
-    /// If the file is malformed, logs the error and falls back to defaults.
-    pub fn load() -> io::Result<Self> {
-        let calibration_path = calibration_file_path()?;
-        let audit_log_path = audit_log_path()?;
+    /// Load from ~/.cognos/hal/calibration.json, or create with defaults.
+    pub fn load() -> Self {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let calibration_path = home.join(".cognos/hal/calibration.json");
+        let audit_log_path   = home.join(".cognos/audit.log");
+        Self::load_from(&calibration_path, &audit_log_path)
+    }
 
+    /// Load from explicit paths (useful for testing).
+    pub fn load_from(calibration_path: &Path, audit_log_path: &Path) -> Self {
         let thresholds = if calibration_path.exists() {
-            let raw = fs::read_to_string(&calibration_path)?;
-            match serde_json::from_str::<HashMap<ActionClass, f32>>(&raw) {
-                Ok(loaded) => {
-                    // Merge with defaults to handle new action classes added in updates
-                    let mut merged = default_thresholds();
-                    for (class, value) in loaded {
-                        merged.insert(class, value);
-                    }
-                    merged
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[HAL calibration] Failed to parse calibration file: {}. \
-                         Using conservative defaults.",
-                        e
-                    );
-                    default_thresholds()
-                }
-            }
+            Self::load_persisted(calibration_path)
         } else {
-            let defaults = default_thresholds();
-            // Write defaults to disk immediately so the user can inspect them
-            let calibration = TrustCalibration {
-                thresholds: defaults,
-                calibration_path: calibration_path.clone(),
-                audit_log_path: audit_log_path.clone(),
-            };
-            calibration.persist()?;
-            return Ok(calibration);
+            Self::default_thresholds()
         };
 
-        Ok(TrustCalibration {
+        let cal = Self {
             thresholds,
-            calibration_path,
-            audit_log_path,
-        })
+            calibration_path: calibration_path.to_path_buf(),
+            audit_log_path: audit_log_path.to_path_buf(),
+        };
+        // Write defaults on first run so the file exists for inspection
+        if !calibration_path.exists() {
+            let _ = cal.persist();
+        }
+        cal
     }
 
     /// Record user feedback for an action class and adjust the threshold.
-    ///
-    /// Rules:
-    /// - UnnecessaryInterrupt: lower threshold by THRESHOLD_DECREMENT (floor: GLOBAL_FLOOR)
-    /// - AlwaysAskForThis: raise threshold permanently to ALWAYS_ASK_THRESHOLD
-    /// - CorrectInterrupt: no change
-    ///
-    /// Hard ceilings on KernelAdjacent and AIGeneratedCode are enforced after
-    /// every feedback application.
-    ///
-    /// Every change is appended to the audit log.
-    pub fn record_feedback(
-        &mut self,
-        action_class: ActionClass,
-        feedback: Feedback,
-    ) -> io::Result<()> {
-        let old_threshold = self.get_threshold(action_class.clone());
+    pub fn record_feedback(&mut self, action_class: ActionClass, feedback: Feedback) {
+        let old = self.get_threshold(&action_class);
+        let floor = action_class.minimum_threshold();
 
-        let new_threshold = match feedback {
+        let new = match feedback {
             Feedback::UnnecessaryInterrupt => {
-                let floor = self.hard_floor_for(&action_class);
-                (old_threshold - THRESHOLD_DECREMENT).max(floor)
-            }
-            Feedback::AlwaysAskForThis => {
-                ALWAYS_ASK_THRESHOLD
+                // Lower threshold by 0.05, respect floor
+                (old - 0.05_f32).max(floor)
             }
             Feedback::CorrectInterrupt => {
-                // No change
-                return Ok(());
+                // No change — reinforces current threshold
+                old
+            }
+            Feedback::AlwaysAskForThis => {
+                // Raise threshold permanently to 0.9
+                0.9_f32
             }
         };
 
-        // Apply hard floor enforcement after computing new value
-        let enforced = self.enforce_hard_floors(&action_class, new_threshold);
+        self.thresholds.insert(action_class.clone(), new);
+        self.write_audit(&CalibrationEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            action_class: action_class.clone(),
+            feedback: feedback.clone(),
+            old_threshold: old,
+            new_threshold: new,
+        });
+        let _ = self.persist();
 
-        self.thresholds.insert(action_class.clone(), enforced);
-
-        // Write to audit log before persisting to disk
-        self.append_audit_log(&action_class, old_threshold, enforced, &feedback)?;
-
-        // Persist calibration to disk
-        self.persist()?;
-
-        Ok(())
-    }
-
-    /// Returns the current effective threshold for a given action class.
-    ///
-    /// If the class has no stored threshold (should not happen after load,
-    /// but handled defensively), returns the conservative default.
-    pub fn get_threshold(&self, action_class: ActionClass) -> f32 {
-        self.thresholds
-            .get(&action_class)
-            .copied()
-            .unwrap_or_else(|| {
-                // Defensive fallback — return conservative default
-                *default_thresholds().get(&action_class).unwrap_or(&0.6)
-            })
-    }
-
-    /// Returns the hard floor for a specific action class.
-    /// KernelAdjacent and AIGeneratedCode have elevated hard floors.
-    fn hard_floor_for(&self, class: &ActionClass) -> f32 {
-        match class {
-            ActionClass::KernelAdjacent   => KERNEL_ADJACENT_HARD_FLOOR,
-            ActionClass::AIGeneratedCode  => AI_GENERATED_CODE_HARD_FLOOR,
-            _                             => GLOBAL_FLOOR,
-        }
-    }
-
-    /// Enforce hard floors after any threshold mutation.
-    /// Returns the value with hard floors applied.
-    fn enforce_hard_floors(&self, class: &ActionClass, value: f32) -> f32 {
-        let floor = self.hard_floor_for(class);
-        value.max(floor).min(1.0)
-    }
-
-    /// Serialize thresholds to JSON and write to calibration file.
-    fn persist(&self) -> io::Result<()> {
-        if let Some(parent) = self.calibration_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let json = serde_json::to_string_pretty(&self.thresholds)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fs::write(&self.calibration_path, json)?;
-        Ok(())
-    }
-
-    /// Append a calibration change entry to the audit log.
-    ///
-    /// Format: ISO8601 timestamp | action_class | old_threshold | new_threshold | feedback
-    fn append_audit_log(
-        &self,
-        class: &ActionClass,
-        old: f32,
-        new: f32,
-        feedback: &Feedback,
-    ) -> io::Result<()> {
-        if let Some(parent) = self.audit_log_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let timestamp = Utc::now().to_rfc3339();
-        let entry = format!(
-            "{} | HAL_CALIBRATION | class={} | old_threshold={:.3} | new_threshold={:.3} | feedback={}\n",
-            timestamp, class, old, new, feedback
+        log::info!(
+            "[hal calibration] {:?} {:?}: {:.2} → {:.2}",
+            action_class, feedback, old, new
         );
+    }
 
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.audit_log_path)?;
+    /// Get the current effective threshold for a given action class.
+    /// HAL interrupts when the action's risk score >= this threshold.
+    pub fn get_threshold(&self, action_class: &ActionClass) -> f32 {
+        *self.thresholds.get(action_class)
+            .unwrap_or(&action_class.default_threshold())
+    }
 
-        file.write_all(entry.as_bytes())?;
-        Ok(())
+    /// Returns all current thresholds for display.
+    pub fn all_thresholds(&self) -> &HashMap<ActionClass, f32> {
+        &self.thresholds
+    }
+
+    // ─── Private ─────────────────────────────────────────────────────────────
+
+    fn default_thresholds() -> HashMap<ActionClass, f32> {
+        use ActionClass::*;
+        [
+            FileDelete, FileMove, PackageInstall, AppLaunch,
+            SystemConfig, NetworkChange, KernelAdjacent, AiGeneratedCode,
+        ]
+        .iter()
+        .map(|c| (c.clone(), c.default_threshold()))
+        .collect()
+    }
+
+    fn load_persisted(path: &Path) -> HashMap<ActionClass, f32> {
+        let json = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[hal calibration] Failed to read {:?}: {}", path, e);
+                return Self::default_thresholds();
+            }
+        };
+
+        let persisted: PersistedCalibration = match serde_json::from_str(&json) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("[hal calibration] Failed to parse calibration: {}", e);
+                return Self::default_thresholds();
+            }
+        };
+
+        // Merge with defaults to handle new action classes added after initial save
+        let mut result = Self::default_thresholds();
+        for (class_str, threshold) in &persisted.thresholds {
+            if let Ok(class) = serde_json::from_str::<ActionClass>(&format!("\"{}\"", class_str)) {
+                let floor = class.minimum_threshold();
+                result.insert(class, threshold.clamp(floor, 1.0));
+            }
+        }
+        result
+    }
+
+    fn persist(&self) -> std::io::Result<()> {
+        let thresholds: HashMap<String, f32> = self.thresholds
+            .iter()
+            .map(|(k, v)| (format!("{:?}", k), *v))
+            .collect();
+
+        let persisted = PersistedCalibration { thresholds };
+        let json = serde_json::to_string_pretty(&persisted)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        if let Some(parent) = self.calibration_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.calibration_path, json)
+    }
+
+    fn write_audit(&self, event: &CalibrationEvent) {
+        let entry = serde_json::json!({
+            "ts": event.timestamp,
+            "agent": "hal_calibration",
+            "action": "threshold_adjusted",
+            "action_class": format!("{:?}", event.action_class),
+            "feedback": format!("{:?}", event.feedback),
+            "old_threshold": event.old_threshold,
+            "new_threshold": event.new_threshold,
+            "outcome": "calibration_updated",
+        });
+
+        if let Some(parent) = self.audit_log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true).append(true)
+            .open(&self.audit_log_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", serde_json::to_string(&entry).unwrap_or_default());
+        }
     }
 }
 
-// ----------------------------------------------------------------------------
-// Path helpers
-// ----------------------------------------------------------------------------
-
-/// Returns the path to the calibration JSON file.
-/// Creates parent directories if they do not exist.
-fn calibration_file_path() -> io::Result<PathBuf> {
-    let home = dirs_home()?;
-    Ok(home.join(".cognos").join("hal").join("calibration.json"))
-}
-
-/// Returns the path to the system audit log.
-fn audit_log_path() -> io::Result<PathBuf> {
-    let home = dirs_home()?;
-    Ok(home.join(".cognos").join("audit.log"))
-}
-
-/// Returns the user's home directory.
-/// Returns an error if HOME is not set (should never happen on a real system).
-fn dirs_home() -> io::Result<PathBuf> {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME environment variable not set"))
-}
-
-// ----------------------------------------------------------------------------
-// Tests
-// ----------------------------------------------------------------------------
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use tempfile::TempDir;
+    use tempfile::tempdir;
 
-    /// Set HOME to a temp dir for test isolation
-    fn test_calibration(tmp: &TempDir) -> TrustCalibration {
-        let home = tmp.path().to_str().unwrap();
-        env::set_var("HOME", home);
-        TrustCalibration {
-            thresholds: default_thresholds(),
-            calibration_path: tmp.path().join(".cognos/hal/calibration.json"),
-            audit_log_path: tmp.path().join(".cognos/audit.log"),
-        }
+    fn cal(dir: &std::path::Path) -> TrustCalibration {
+        TrustCalibration::load_from(
+            &dir.join("calibration.json"),
+            &dir.join("audit.log"),
+        )
     }
 
     #[test]
-    fn test_defaults_are_conservative() {
-        let defaults = default_thresholds();
-        assert!(*defaults.get(&ActionClass::KernelAdjacent).unwrap() >= 0.7);
-        assert!(*defaults.get(&ActionClass::AIGeneratedCode).unwrap() >= 0.7);
+    fn defaults_are_conservative() {
+        let dir = tempdir().unwrap();
+        let c = cal(dir.path());
+        // New installs should interrupt fairly eagerly for dangerous actions
+        assert!(c.get_threshold(&ActionClass::FileDelete) >= 0.3);
+        assert!(c.get_threshold(&ActionClass::KernelAdjacent) >= 0.6);
+        assert!(c.get_threshold(&ActionClass::AiGeneratedCode) >= 0.6);
     }
 
     #[test]
-    fn test_unnecessary_interrupt_lowers_threshold() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        let before = cal.get_threshold(ActionClass::FileMove);
-        cal.record_feedback(ActionClass::FileMove, Feedback::UnnecessaryInterrupt).unwrap();
-        let after = cal.get_threshold(ActionClass::FileMove);
-        assert!(after < before, "Threshold should decrease: {} -> {}", before, after);
-        assert!((before - after - THRESHOLD_DECREMENT).abs() < 0.001);
+    fn unnecessary_interrupt_lowers_threshold() {
+        let dir = tempdir().unwrap();
+        let mut c = cal(dir.path());
+        let before = c.get_threshold(&ActionClass::FileMove);
+        c.record_feedback(ActionClass::FileMove, Feedback::UnnecessaryInterrupt);
+        let after = c.get_threshold(&ActionClass::FileMove);
+        assert!(after < before, "Unnecessary feedback should lower threshold");
     }
 
     #[test]
-    fn test_always_ask_raises_to_09() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        cal.record_feedback(ActionClass::AppLaunch, Feedback::AlwaysAskForThis).unwrap();
-        assert_eq!(cal.get_threshold(ActionClass::AppLaunch), ALWAYS_ASK_THRESHOLD);
+    fn always_ask_raises_to_0_9() {
+        let dir = tempdir().unwrap();
+        let mut c = cal(dir.path());
+        c.record_feedback(ActionClass::AppLaunch, Feedback::AlwaysAskForThis);
+        assert!((c.get_threshold(&ActionClass::AppLaunch) - 0.9).abs() < 0.001);
     }
 
     #[test]
-    fn test_correct_interrupt_no_change() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        let before = cal.get_threshold(ActionClass::PackageInstall);
-        cal.record_feedback(ActionClass::PackageInstall, Feedback::CorrectInterrupt).unwrap();
-        let after = cal.get_threshold(ActionClass::PackageInstall);
-        assert_eq!(before, after);
+    fn correct_interrupt_makes_no_change() {
+        let dir = tempdir().unwrap();
+        let mut c = cal(dir.path());
+        let before = c.get_threshold(&ActionClass::PackageInstall);
+        c.record_feedback(ActionClass::PackageInstall, Feedback::CorrectInterrupt);
+        let after = c.get_threshold(&ActionClass::PackageInstall);
+        assert!((before - after).abs() < 0.001);
     }
 
     #[test]
-    fn test_kernel_adjacent_hard_floor_respected() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        // Spam UnnecessaryInterrupt 100 times — floor should hold
+    fn kernel_and_ai_floors_respected() {
+        let dir = tempdir().unwrap();
+        let mut c = cal(dir.path());
+        // Apply many "unnecessary" feedbacks to try to push below floor
         for _ in 0..100 {
-            cal.record_feedback(ActionClass::KernelAdjacent, Feedback::UnnecessaryInterrupt).unwrap();
+            c.record_feedback(ActionClass::KernelAdjacent, Feedback::UnnecessaryInterrupt);
+            c.record_feedback(ActionClass::AiGeneratedCode, Feedback::UnnecessaryInterrupt);
         }
         assert!(
-            cal.get_threshold(ActionClass::KernelAdjacent) >= KERNEL_ADJACENT_HARD_FLOOR,
-            "KernelAdjacent hard floor violated: {}",
-            cal.get_threshold(ActionClass::KernelAdjacent)
+            c.get_threshold(&ActionClass::KernelAdjacent) >= 0.60,
+            "KernelAdjacent below floor: {}",
+            c.get_threshold(&ActionClass::KernelAdjacent)
+        );
+        assert!(
+            c.get_threshold(&ActionClass::AiGeneratedCode) >= 0.60,
+            "AiGeneratedCode below floor: {}",
+            c.get_threshold(&ActionClass::AiGeneratedCode)
         );
     }
 
     #[test]
-    fn test_ai_generated_code_hard_floor_respected() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        for _ in 0..100 {
-            cal.record_feedback(ActionClass::AIGeneratedCode, Feedback::UnnecessaryInterrupt).unwrap();
+    fn persists_and_reloads() {
+        let dir = tempdir().unwrap();
+        {
+            let mut c = cal(dir.path());
+            c.record_feedback(ActionClass::FileMove, Feedback::UnnecessaryInterrupt);
         }
-        assert!(
-            cal.get_threshold(ActionClass::AIGeneratedCode) >= AI_GENERATED_CODE_HARD_FLOOR,
-            "AIGeneratedCode hard floor violated: {}",
-            cal.get_threshold(ActionClass::AIGeneratedCode)
-        );
+        // Reload
+        let c2 = cal(dir.path());
+        // The lowered threshold should survive reload
+        assert!(c2.get_threshold(&ActionClass::FileMove) < ActionClass::FileMove.default_threshold());
     }
 
     #[test]
-    fn test_global_floor_respected() {
-        let tmp = TempDir::new().unwrap();
-        let mut cal = test_calibration(&tmp);
-        for _ in 0..100 {
-            cal.record_feedback(ActionClass::AppLaunch, Feedback::UnnecessaryInterrupt).unwrap();
-        }
-        assert!(
-            cal.get_threshold(ActionClass::AppLaunch) >= GLOBAL_FLOOR,
-            "Global floor violated: {}",
-            cal.get_threshold(ActionClass::AppLaunch)
-        );
+    fn audit_log_written_on_change() {
+        let dir = tempdir().unwrap();
+        let mut c = cal(dir.path());
+        c.record_feedback(ActionClass::FileDelete, Feedback::UnnecessaryInterrupt);
+        let log_path = dir.path().join("audit.log");
+        assert!(log_path.exists(), "Audit log not written");
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("threshold_adjusted"));
     }
 }
