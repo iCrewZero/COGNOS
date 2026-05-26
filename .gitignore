@@ -12,6 +12,27 @@ __pycache__/
 venv/
 *.egg-info/
 
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+cmake-build-*/
+Makefile
+
+# ONNX model binaries
+*.onnx
+
 # Kernel & system build outputs
 /build/cache/
 /build/output/
@@ -21,6 +42,14 @@ venv/
 .env
 .env.*
 !.env.example
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
 
 # OS junk
 .DS_Store
