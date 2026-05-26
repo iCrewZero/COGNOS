@@ -1,0 +1,41 @@
+version: 2
+
+updates:
+  # Rust (Cargo) — workspace root
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - rust
+    commit-message:
+      prefix: "deps(rust):"
+
+  # Python — agents
+  - package-ecosystem: pip
+    directory: /agents
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "deps(python):"
+
+  # GitHub Actions — keep CI actions pinned and up-to-date
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci(deps):"

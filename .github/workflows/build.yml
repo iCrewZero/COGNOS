@@ -2,72 +2,92 @@ name: Build
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-rust:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
 
+      - name: Install protoc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
             target/
-          key: rust-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
 
-      - name: Build HAL
-        run: cargo build --release --manifest-path hal/Cargo.toml
-
-      - name: Build UNIPKG
-        run: cargo build --release --manifest-path unipkg/Cargo.toml
-
-      - name: Build Intent Engine
-        run: cargo build --release --manifest-path intent-engine/Cargo.toml
-
-      - name: Build Memory subsystem
-        run: cargo build --release --manifest-path memory/Cargo.toml
-
-      - name: Build Scheduler
-        run: cargo build --release --manifest-path scheduler/Cargo.toml
-
-      - name: Build Shell
-        run: cargo build --release --manifest-path shell/Cargo.toml
+      - name: Build workspace
+        run: |
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            cargo build --workspace --release
+          else
+            cargo build --workspace
+          fi
 
       - name: Run all Rust tests
         run: cargo test --workspace
 
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Rustfmt check
+        run: cargo fmt --check
+
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cognos-binaries
           path: target/release/cognos-*
 
   build-python:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agents/requirements.txt
 
       - name: Install dependencies
         run: pip install -r agents/requirements.txt
 
+      - name: Install test/lint tools
+        run: pip install ruff==0.8.0 mypy==1.13.0 pytest
+
       - name: Syntax check all agent files
         run: python -m py_compile agents/*.py
+
+      - name: Ruff lint
+        run: ruff check agents/
 
       - name: Run Python tests
         run: |
@@ -77,11 +97,37 @@ jobs:
             echo "No agent tests directory yet — skipping"
           fi
 
+      - name: Run threat model tests
+        run: python -m pytest .github/workflows/threat_model_test.py -v --tb=short
+
+  proto-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+
+      - name: Verify proto compiles
+        run: |
+          protoc --proto_path=agents/shared/ipc/proto \
+                 --descriptor_set_out=/dev/null \
+                 agents/shared/ipc/proto/cognos.proto
+          echo "Proto compilation OK"
+
   build-kernel:
     runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 30
+    if: |
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.pull_request.labels.*.name, 'kernel')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install kernel build dependencies
         run: |
@@ -91,10 +137,12 @@ jobs:
             libssl-dev libelf-dev bc dwarves cpio pahole
 
       - name: Cache kernel source
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: build/cache/
           key: kernel-${{ hashFiles('kernel/config/cognos_defconfig') }}
+          restore-keys: |
+            kernel-
 
       - name: Build kernel
         run: bash build/kernel_build.sh
@@ -103,7 +151,36 @@ jobs:
         run: bash build/verify_kernel_config.sh
 
       - name: Upload kernel debs
-        uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cognos-kernel
           path: build/output/linux-*.deb
+
+  # ─── Gate job: single required status check for branch protection ───────────
+  ci-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    needs: [build-rust, build-python, proto-lint]
+    if: always()
+    steps:
+      - name: Evaluate required job results
+        run: |
+          echo "build-rust: ${{ needs.build-rust.result }}"
+          echo "build-python: ${{ needs.build-python.result }}"
+          echo "proto-lint: ${{ needs.proto-lint.result }}"
+
+          if [ "${{ needs.build-rust.result }}" != "success" ]; then
+            echo "::error::build-rust failed or was cancelled"
+            exit 1
+          fi
+          if [ "${{ needs.build-python.result }}" != "success" ]; then
+            echo "::error::build-python failed or was cancelled"
+            exit 1
+          fi
+          if [ "${{ needs.proto-lint.result }}" != "success" ]; then
+            echo "::error::proto-lint failed or was cancelled"
+            exit 1
+          fi
+
+          echo "All required jobs passed."
