@@ -41,4 +41,4 @@ backoff = { version = "0.4", features = ["tokio"] }
 async-stream = "0.3"
 
 [build-dependencies]
-tonic-build = "0.11"
+tonic-build = "0.14"
