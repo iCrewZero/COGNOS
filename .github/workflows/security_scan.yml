@@ -83,13 +83,33 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Install eBPF build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r) || \
-          sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            clang \
+            llvm \
+            libbpf-dev \
+            linux-headers-generic \
+            linux-tools-generic \
+            linux-tools-common \
+            linux-cloud-tools-generic || true
+          # bpftool may be in a different package on this runner
+          sudo apt-get install -y bpftool || \
+          sudo apt-get install -y linux-tools-$(uname -r) || true
+
+      - name: Verify bpftool is available
+        run: |
+          which bpftool || find /usr -name bpftool 2>/dev/null
+          bpftool version
+
+      - name: Generate vmlinux.h
+        run: |
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c \
+            > kernel/ebpf/vmlinux.h
+          echo "Generated vmlinux.h ($(wc -l < kernel/ebpf/vmlinux.h) lines)"
 
       - name: Build eBPF programs
         run: |
@@ -97,9 +117,10 @@ jobs:
             [ -e "$prog" ] || continue
             echo "Building $prog..."
             clang -O2 -target bpf \
+              -D__TARGET_ARCH_x86 \
+              -I kernel/ebpf \
               -I/usr/include/$(uname -m)-linux-gnu \
               -c "$prog" -o "${prog%.c}.o"
-
             if [ ! -s "${prog%.c}.o" ]; then
               echo "ERROR: $prog produced empty output"
               exit 1
