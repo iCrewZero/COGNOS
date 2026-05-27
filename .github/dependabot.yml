@@ -1,7 +1,5 @@
 version: 2
-
 updates:
-  # Rust (Cargo) — workspace root
   - package-ecosystem: cargo
     directory: /
     schedule:
@@ -13,8 +11,12 @@ updates:
       - rust
     commit-message:
       prefix: "deps(rust):"
+    reviewers:
+      - iCrewZero
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
-  # Python — agents
   - package-ecosystem: pip
     directory: /agents
     schedule:
@@ -26,8 +28,9 @@ updates:
       - python
     commit-message:
       prefix: "deps(python):"
+    reviewers:
+      - iCrewZero
 
-  # GitHub Actions — keep CI actions pinned and up-to-date
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -39,3 +42,5 @@ updates:
       - ci
     commit-message:
       prefix: "ci(deps):"
+    reviewers:
+      - iCrewZero
