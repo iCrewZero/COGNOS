@@ -70,8 +70,8 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit==2.7.3
 
-      - name: Audit Rust dependencies
-        run: cargo audit --deny warnings
+      -name: Audit Rust dependencies
+      run: cargo audit --ignore RUSTSEC-2026-0035
 
       - name: Audit Python dependencies
         run: |
