@@ -1,0 +1,40 @@
+# COGNOS/OS — Code Ownership Rules
+# Enforced via GitHub branch protection "Require review from Code Owners"
+#
+# Syntax: path-pattern  @owner1 @owner2
+# Last matching rule wins. More specific paths override broader ones.
+
+# ─── CRITICAL: CI/CD and Governance ──────────────────────────────────────────
+# Only the project lead can modify workflows, CODEOWNERS, or governance files.
+/.github/                              @Kalimusic1 @cognos-lead
+
+# ─── CRITICAL: Human Approval Layer (HAL) ────────────────────────────────────
+# HAL is the trust boundary of the entire OS. Zero merge without lead approval.
+/hal/                                  @Kalimusic1 @cognos-lead
+
+# ─── CRITICAL: Cryptography and IPC ──────────────────────────────────────────
+# Auth, TLS, and proto definitions are high-value security targets.
+/agents/shared/ipc/src/auth.rs         @Kalimusic1 @cognos-lead
+/agents/shared/ipc/src/tls.rs          @Kalimusic1 @cognos-lead
+/agents/shared/ipc/proto/              @Kalimusic1 @cognos-lead
+/agents/shared/ipc/src/interceptor.rs  @Kalimusic1 @cognos-lead
+
+# ─── HIGH: Kernel, eBPF, and Boot ────────────────────────────────────────────
+/kernel/                               @Kalimusic1 @cognos-lead
+/build/                                @Kalimusic1 @cognos-lead
+
+# ─── HIGH: Security Policies ─────────────────────────────────────────────────
+/security/                             @Kalimusic1 @cognos-lead
+
+# ─── STANDARD: Core subsystems (lead review) ─────────────────────────────────
+/intent-engine/                        @Kalimusic1
+/scheduler/                            @Kalimusic1
+/memory/                               @Kalimusic1
+/agents/shared/ipc/                    @Kalimusic1
+
+# ─── OPEN: UI, Shell, Docs, Services (team review sufficient) ────────────────
+/GTK4/                                 @cognos-team
+/docs/                                 @cognos-team
+/shell/                                @cognos-team
+/services/                             @cognos-team
+/unipkg/                               @cognos-team

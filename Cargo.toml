@@ -1,3 +1,3 @@
 [workspace]
-members = ["hal"]
+members = ["hal", "agents/shared/ipc"]
 resolver = "2"

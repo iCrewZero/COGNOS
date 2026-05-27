@@ -28,7 +28,6 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 cmake-build-*/
-Makefile
 
 # ONNX model binaries
 *.onnx
@@ -36,7 +35,10 @@ Makefile
 # Kernel & system build outputs
 /build/cache/
 /build/output/
+/build/rootfs_work/
+/build/iso_work/
 /kernel/**/*.o
+*.deb
 
 # Secrets & local config
 .env
