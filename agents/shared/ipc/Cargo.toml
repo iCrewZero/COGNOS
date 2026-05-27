@@ -34,7 +34,7 @@ base64 = "0.22"
 hex = "0.4"
 hostname = "0.4"
 anyhow = "1"
-tower = { version = "0.4", features = ["full"] }
+tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.5", features = ["trace"] }
 dashmap = "6"
 backoff = { version = "0.4", features = ["tokio"] }
