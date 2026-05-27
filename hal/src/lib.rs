@@ -15,9 +15,10 @@ pub mod approval_flow;
 
 pub use audit_log::{AuditEntry, AuditFilter, AuditLog, VerifyResult};
 pub use risk_scorer::{
-    describe_score, risk_level_from_score, score_action, ActionCategory, FloorRule,
-    PatternMatchLevel, ProposedAction, RiskLevel, RiskScore, ScoreComponents, SystemContext,
-    TimeAnomalyLevel, VibeCodeStatus,
+    describe_score, score_action,
+    IrreversibilityLevel, ScopeLevel, TrustContextLevel,
+    TimeAnomalyLevel, VibeFlagLevel, UserHistoryLevel, PatternMatchLevel,
+    ProposedAction, RiskLevel, RiskScore, ComponentScores, SystemContext,
 };
 pub use trust_calibration::{ActionClass, Feedback, TrustCalibration};
 
