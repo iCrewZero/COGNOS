@@ -242,6 +242,7 @@ impl IntentKvCache {
     pub fn make_key(raw_input: &str, session: &SessionContext) -> u64 {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use chrono::{Datelike, Timelike};
 
         let normalized = raw_input.trim().to_lowercase()
             .replace(|c: char| c.is_ascii_punctuation(), "");
