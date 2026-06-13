@@ -1,3 +1,10 @@
 [workspace]
-members = ["hal", "agents/shared/ipc", "intent-engine"]
+members = [
+    "hal",
+    "agents/shared/ipc",
+    "intent-engine",
+    "scheduler",
+    "memory",
+    "memory/anfs",
+]
 resolver = "2"

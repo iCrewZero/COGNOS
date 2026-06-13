@@ -1,0 +1,17 @@
+[package]
+name = "cognos-memory"
+version = "0.1.0"
+edition = "2021"
+description = "COGNOS local memory — consent-scoped embedding index and semantic search"
+
+[lib]
+name = "cognos_memory"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
