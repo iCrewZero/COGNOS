@@ -1,0 +1,67 @@
+# cognoS/OS — AI daemon systemd unit
+#
+# Purpose:
+#   Runs the COGNOS AI daemon: top-level orchestrator + agent runtime that
+#   hosts the model pool, agent worker threads, and capability enforcement.
+#
+# Placement note:
+#   AI daemon runs inside the hypervisor authority VM in v1.
+#   In v0 this unit is a stub wired against the host for development.
+#
+# Memory note:
+#   MemoryDenyWriteExecute is FALSE for this unit because the LLM inference
+#   engine (llama.cpp) requires W^X-violating mmap for JIT-compiled kernels
+#   and KV cache staging. All other hardening remains in force.
+#
+# Owner: COGNOS core team
+# Manpage: https://cognos.os/docs/ai-daemon
+[Unit]
+Description=COGNOS AI daemon — orchestrator and agent runtime
+Documentation=https://cognos.os/docs/ai-daemon
+After=cognos-hal.service cognos-intent.service cognos-memory.service
+Wants=cognos-hal.service cognos-intent.service cognos-memory.service
+PartOf=cognos.target
+
+[Service]
+Type=exec
+User=cognos
+Group=cognos
+ExecStart=/usr/lib/cognos/cognos-ai-daemon --config /etc/cognos/ai-daemon.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Agent runtime state (KV cache, model manifest, conversation journals)
+RuntimeDirectory=cognos
+StateDirectory=cognos/ai
+WorkingDirectory=/var/lib/cognos/ai
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=true
+# AI daemon runs inside the hypervisor authority VM in v1
+# LLM inference requires W^X-violating mmap for JIT/KV cache, hence:
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+
+# --- Restart policy ---
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+SyslogIdentifier=cognos-ai-daemon
+
+[Install]
+WantedBy=cognos.target
+
+# v0: stub — daemon binary path is illustrative
+# TODO(v1): add ExecStartPre=/usr/lib/cognos/attestation-check once TPM measured boot is wired
+# TODO(v1): add RestrictNetworkInterfaces=cognos-mesh once netns isolation lands
+# TODO(v1): add PrivateUsers=true + DevicePolicy=closed inside the authority VM

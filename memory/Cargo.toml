@@ -1,0 +1,40 @@
+[package]
+name = "cognos-memory"
+version = "0.1.0"
+edition = "2021"
+description = "COGNOS local memory — consent-scoped embedding index and semantic search"
+
+[lib]
+name = "cognos_memory"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# HTTP client for memory service IPC and ChromaDB REST API
+# Owner: iCrewZero — added cognos-anfs as optional dep so the chromadb feature resolves.
+reqwest = { version = "0.12", features = ["json"], optional = true }
+# ANFS integration for ChromaDB-backed memory indexing.
+cognos-anfs = { path = "anfs", optional = true }
+# For mlock in secure_pool
+libc = { version = "0.2", optional = true }
+
+[[bin]]
+name = "cognos-memory"
+path = "src/bin/memory_main.rs"
+
+
+[features]
+default = []
+# Owner: iCrewZero — added reqwest to chromadb feature; it was declared optional
+# for ChromaDB REST API but never enabled by the feature gate.
+chromadb = ["cognos-anfs", "reqwest"]  # also needs chromadb sub-crate
+fabric = ["libc"]            # needs libc for mlock

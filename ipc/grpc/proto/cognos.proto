@@ -1,0 +1,224 @@
+// COGNOS/OS — Inter-Agent IPC Protocol (v1)
+// ─────────────────────────────────────────────────────────────────────────────
+// Protocol Buffers v3 schema for COGNOS inter-agent communication.
+//
+// This schema is the wire contract between every agent, the HAL, the
+// intent-engine, the scheduler and the memory service. All RPCs flow
+// through capability-tagged Envelopes so that the receiving side can
+// enforce the capability lattice before any side effect is permitted.
+//
+// Stability: v1 — additive only. Breaking changes MUST bump to v2.
+// ─────────────────────────────────────────────────────────────────────────────
+syntax = "proto3";
+
+package cognos.ipc.v1;
+
+option go_package = "github.com/cognos-os/cognos/ipc/grpc/proto;cognosipcv1";
+
+// ─── Top-level service ───────────────────────────────────────────────────────
+// CognosIpc is the single gRPC surface every agent speaks. Each RPC is
+// wrapped by an Envelope carrying trace_id, source, target, capability
+// and an HMAC signature so the server can authenticate and authorize
+// before dispatch.
+service CognosIpc {
+    // DispatchIntent routes a parsed intent to its target agent(s).
+    rpc DispatchIntent(Intent) returns (IntentResponse) {}
+
+    // QueryMemory performs a vector + tag search against ANFS / memory.
+    rpc QueryMemory(MemoryQuery) returns (MemoryResult) {}
+
+    // HalGate requests a hardware action through the HAL gate.
+    rpc HalGate(HalGateRequest) returns (HalGateResponse) {}
+
+    // ResourceHint pushes a scheduling hint to the scheduler daemon.
+    rpc ResourceHint(ResourceHint) returns (Heartbeat) {}
+
+    // Heartbeat is a bidirectional liveness ping (unused stream direction in v0).
+    rpc Heartbeat(Heartbeat) returns (Heartbeat) {}
+
+    // StreamEvents is a server-streaming RPC used by shells, dashboards
+    // and observers to subscribe to the global event bus.
+    rpc StreamEvents(Heartbeat) returns (stream Event) {}
+}
+
+// ─── Envelope (the signed wrapper around every payload) ──────────────────────
+message Envelope {
+    // Opaque trace id (UUID v4). Propagates across all hops.
+    string trace_id   = 1;
+    // Logical source agent id, e.g. "agent.coordinator".
+    string source     = 2;
+    // Logical target agent id, e.g. "hal.gate".
+    string target     = 3;
+    // Capability required to send this payload, e.g. "memory.read".
+    string capability = 4;
+    // Raw serialized inner message (the actual RPC payload).
+    bytes  payload    = 5;
+    // HMAC-SHA256 over (trace_id|source|target|capability|payload).
+    bytes  signature  = 6;
+    // Wall-clock nanos since UNIX epoch (sender side).
+    uint64 sent_at_ns = 7;
+    // Schema version of the inner payload, e.g. "v1".
+    string schema     = 8;
+}
+
+// ─── Intent ──────────────────────────────────────────────────────────────────
+message Intent {
+    // Unique intent id (UUID v4).
+    string intent_id       = 1;
+    // Original user utterance, optional.
+    string utterance       = 2;
+    // Canonical action name, e.g. "file.move".
+    string action          = 3;
+    // Structured arguments as a JSON-encoded blob.
+    bytes  args_json       = 4;
+    // Confidence score in [0.0, 1.0].
+    double confidence      = 5;
+    // Required capability set, e.g. ["file.write", "fs.hal"].
+    repeated string requires = 6;
+    // Origin user / session id.
+    string session_id      = 7;
+    // Deadline in nanos since epoch; 0 = no deadline.
+    uint64 deadline_ns     = 8;
+    // Trace id propagated from the originating Envelope.
+    string trace_id        = 9;
+}
+
+message IntentResponse {
+    // Mirrors the originating intent_id.
+    string intent_id        = 1;
+    // "ok" | "denied" | "failed" | "pending".
+    string status           = 2;
+    // Optional structured result (JSON blob).
+    bytes  result_json      = 3;
+    // Human-readable explanation.
+    string message          = 4;
+    // Set when status == "denied".
+    CapabilityViolation violation = 5;
+    // Wall-clock nanos when the response was produced.
+    uint64 completed_at_ns  = 6;
+}
+
+// ─── Memory ──────────────────────────────────────────────────────────────────
+message MemoryQuery {
+    // Free-text or semantic query.
+    string query            = 1;
+    // Tag filters (AND semantics), e.g. ["project:cognos", "kind:note"].
+    repeated string tags    = 2;
+    // Embedding vector for similarity search; empty = tag-only.
+    repeated double vector  = 3;
+    // Top-K results to return.
+    uint32 top_k            = 4;
+    // Minimum similarity score in [0.0, 1.0].
+    double min_score        = 5;
+    // Restrict search to this namespace / agent scope.
+    string namespace        = 6;
+    // Trace id.
+    string trace_id         = 7;
+}
+
+message MemoryResult {
+    message Hit {
+        string object_id    = 1;
+        double score         = 2;
+        bytes  payload_json  = 3;
+        repeated string tags = 4;
+    }
+    repeated Hit hits       = 1;
+    // Total matches found before truncation.
+    uint32 total            = 2;
+    // Wall-clock nanos the query took.
+    uint64 elapsed_ns       = 3;
+    string trace_id         = 4;
+}
+
+// ─── HAL Gate ────────────────────────────────────────────────────────────────
+message HalGateRequest {
+    // HAL operation name, e.g. "block.write", "net.send".
+    string op                 = 1;
+    // Device or resource path, e.g. "/dev/sda1".
+    string device             = 2;
+    // Inline payload (e.g. bytes to write).
+    bytes  data               = 3;
+    // Required capability, e.g. "fs.block.write".
+    string capability         = 4;
+    // Risk score override (0.0–1.0); -1.0 = let HAL compute.
+    double risk_override      = 5;
+    // Whether a user-approval flow is allowed to block.
+    bool   allow_approval     = 6;
+    // Originating trace id.
+    string trace_id           = 7;
+}
+
+message HalGateResponse {
+    // "granted" | "denied" | "approval_required" | "failed".
+    string status             = 1;
+    // HAL-issued grant token; required for follow-up ops.
+    string grant_token        = 2;
+    // Computed risk score.
+    double risk_score         = 3;
+    // Optional returned data (e.g. block read).
+    bytes  data               = 4;
+    // Capability violation if denied.
+    CapabilityViolation violation = 5;
+    string trace_id           = 6;
+}
+
+// ─── Resource hints ──────────────────────────────────────────────────────────
+message ResourceHint {
+    // "cpu" | "gpu" | "memory" | "io" | "net".
+    string kind             = 1;
+    // Agent id the hint applies to.
+    string agent_id         = 2;
+    // Soft priority in [0, 100].
+    uint32 priority         = 3;
+    // Estimated duration in nanos.
+    uint64 duration_ns      = 4;
+    // Free-form metadata (JSON blob).
+    bytes  metadata_json    = 5;
+    string trace_id         = 6;
+}
+
+// ─── Heartbeat ───────────────────────────────────────────────────────────────
+message Heartbeat {
+    string agent_id         = 1;
+    // Sequence number, monotonic per agent.
+    uint64 seq              = 2;
+    // Wall-clock nanos when sent.
+    uint64 sent_at_ns       = 3;
+    // Load average (1-minute), optional.
+    double load_avg         = 4;
+    // Free-form status string, e.g. "idle", "busy".
+    string status           = 5;
+}
+
+// ─── Events (server-streamed) ────────────────────────────────────────────────
+message Event {
+    // Event kind, e.g. "intent.dispatched", "hal.granted", "agent.dropped".
+    string kind             = 1;
+    // Originating agent.
+    string source           = 2;
+    // Wall-clock nanos when the event was emitted.
+    uint64 emitted_at_ns    = 3;
+    // Structured event payload (JSON blob).
+    bytes  payload_json     = 4;
+    // Severity: "debug" | "info" | "warn" | "error".
+    string severity         = 5;
+    // Trace id propagation.
+    string trace_id         = 6;
+}
+
+// ─── Capability violations ───────────────────────────────────────────────────
+message CapabilityViolation {
+    // Capability that was required.
+    string required         = 1;
+    // Capability the caller actually held (empty = none).
+    string held             = 2;
+    // Machine-readable reason code: "missing" | "expired" | "scope" | "signature".
+    string reason           = 3;
+    // Human-readable explanation.
+    string message          = 4;
+    // Offending agent id.
+    string agent_id         = 5;
+    // Trace id of the rejected request.
+    string trace_id         = 6;
+}

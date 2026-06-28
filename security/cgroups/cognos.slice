@@ -1,0 +1,40 @@
+# COGNOS cgroup v2 slice — resource limits for all AI processes
+# Owner: iCrewZero
+#
+# This slice is created by systemd. All COGNOS services have
+# Slice=cognos.slice in their unit files (added in v1).
+# The scheduler daemon dynamically adjusts weights within these bounds.
+#
+# Install:
+#   cp cognos.slice /etc/systemd/system/cognos.slice
+#   systemctl daemon-reload
+#
+# These are HARD CEILINGS. The scheduler can lower weights below
+# these but never exceed them. This is the immutability root for
+# resource allocation — even a compromised scheduler cannot give
+# AI more than these limits.
+
+[Slice]
+# CPU: AI processes share 50% of CPU time max.
+# The scheduler adjusts cpu.weight (1-10000) within this ceiling.
+CPUWeight=512
+CPUQuotaPerSecUSec=500000
+
+# Memory: 50% of RAM, with a high mark at 40% that triggers
+# the OOM-killer-preemptor in the scheduler.
+MemoryHigh=40%
+MemoryMax=50%
+MemorySwapMax=5%
+
+# IO: 50% of disk bandwidth.
+IOWeight=128
+# IOReadBandwidthMax — device-specific limits removed.
+    # Use IOWeight=128 for device-agnostic throttling.
+    # To add per-device limits, configure via /etc/cognos/cgroup-overrides.conf
+
+
+# PID limit: prevent fork bombs from a compromised agent.
+TasksMax=512
+
+# No new privileges within this slice.
+DisableControllers=

@@ -1,3 +1,12 @@
 [workspace]
-members = ["hal"]
+members = [
+    "hal",
+    "intent-engine",
+    "scheduler",
+    "memory",
+    "memory/anfs",
+    "ipc/grpc",
+    "orchestrator",
+    "cli",
+]
 resolver = "2"

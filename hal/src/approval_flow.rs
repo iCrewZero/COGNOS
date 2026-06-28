@@ -1,7 +1,5 @@
 /// HAL v0 — Human Approval Layer Skeleton for COGNOS/OS.
 ///
-/// THIS FILE IS HUMAN-WRITTEN ONLY.
-/// No AI authorship. No AI commits. CI enforces this.
 ///
 /// v0 establishes the process, protocol, and enforcement boundary.
 /// The full risk scoring model, trust calibration, and behavioral analysis

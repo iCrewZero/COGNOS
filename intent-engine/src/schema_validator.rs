@@ -69,10 +69,15 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Validation errors for IntentSchema fields.
+/// Owner: iCrewZero — added thiserror derive so errors are useful
+/// when returned from validate(). Removed dead ConfidenceBelowZero
+/// variant (unreachable: parse_f32 already enforces 0.0..=1.0).
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {
-    ConfidenceBelowZero,
+    #[error("disambiguation required but no question provided")]
     DisambiguationWithoutQuestion,
+    #[error("cloud escalation parameters are inconsistent")]
     CloudEscalationInconsistent,
 }
 
@@ -183,11 +188,10 @@ fn parse_f32(v: &serde_json::Value, field: &str) -> Result<f32, ParseError> {
 }
 
 /// Validate all invariants after parsing.
+/// Owner: iCrewZero — removed dead confidence<0 check (parse_f32 already
+/// enforces 0.0..=1.0, so it can never be negative here).
 pub fn validate(schema: &IntentSchema) -> Result<(), Vec<ValidationError>> {
     let mut errors = Vec::new();
-    if schema.confidence < 0.0 {
-        errors.push(ValidationError::ConfidenceBelowZero);
-    }
     if schema.disambiguation_required && schema.disambiguation_question.is_none() {
         errors.push(ValidationError::DisambiguationWithoutQuestion);
     }
@@ -242,6 +246,7 @@ impl IntentKvCache {
     pub fn make_key(raw_input: &str, session: &SessionContext) -> u64 {
         use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use chrono::{Datelike, Timelike};
 
         let normalized = raw_input.trim().to_lowercase()
             .replace(|c: char| c.is_ascii_punctuation(), "");

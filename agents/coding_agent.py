@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -19,6 +18,11 @@ from datetime import datetime, UTC
 from pathlib import Path
 
 from shared.base_agent import BaseAgent
+
+# Fix B2 — iCrewZero: coding_agent.py references AgentMessage on lines 306
+# and 475, but only imported BaseAgent (which no longer defines AgentMessage
+# in types.py).  Import it directly from its canonical location.
+from shared.types import AgentMessage
 
 log = logging.getLogger("cognos.coding_agent")
 
@@ -167,7 +171,7 @@ class CodingAgent(BaseAgent):
         file_changes: list[FileChange] = []
         for fc in raw_impl.get("file_changes", []):
             # Write to temp first — never to source directly
-            temp_path = Path(tempfile.mkdtemp()) / Path(fc["path"]).name
+            temp_path = Path(tempfile.mkdtemp()) / Path(fc["path"] or "unnamed").name
             temp_path.write_text(fc.get("new_content", ""))
 
             # Security scan (mandatory — cannot skip)
@@ -223,7 +227,18 @@ class CodingAgent(BaseAgent):
                     change.path, change.new_content, overwrite=True
                 )
             else:
-                Path(change.path).write_text(change.new_content)
+                # Safety: validate the path even without FileAgent.
+                # Reject path traversal, null bytes, and writes outside home.
+                target = Path(change.path).expanduser().resolve()
+                home = Path.home()
+                if not str(target).startswith(str(home)):
+                    log.error("Path traversal blocked: %s", change.path)
+                    continue
+                if "\x00" in change.path:
+                    log.error("Null byte in path: %s", change.path)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(change.new_content)
 
             self._audit("apply_change", change.path, "success",
                         note=f"ai_generated=true type={change.change_type}")
@@ -233,7 +248,7 @@ class CodingAgent(BaseAgent):
         module = Path(impl.file_changes[0].path).parent.name if impl.file_changes else "unknown"
         commit_msg = (
             f"feat({module}): {impl.explanation[:60]}\n\n"
-            "Co-authored-by: Claude (Anthropic) <ai@anthropic.com>"
+            "Co-authored-by: COGNOS AI <ai@cognos.os>"
         )
 
         return ApplyResult(
@@ -278,7 +293,10 @@ class CodingAgent(BaseAgent):
         if self._api:
             raw = await self._api.complete(system, prompt, max_tokens=2000)
             try:
-                return json.loads(raw)
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    return {"file_changes": [], "explanation": str(parsed)}
+                return parsed
             except json.JSONDecodeError:
                 return {"file_changes": [], "explanation": raw}
         return {"file_changes": [], "explanation": f"Implement: {task}"}
@@ -286,11 +304,19 @@ class CodingAgent(BaseAgent):
     async def _security_scan(self, path: str) -> ScanResult:
         """Run the Security Agent's static analysis on generated code."""
         if self._security:
-            result = await self._security.scan_file(path)
-            return ScanResult(
-                passed=result.get("passed", True),
-                findings=result.get("findings", []),
-            )
+            try:
+                # Use handle_message so we go through the normal agent message path.
+                # The security agent's handle_message returns a dict with scan results.
+                result = await self._security.handle_message(
+                    AgentMessage(type="SCAN_FILE", payload={"path": path}, sender="coding")
+                )
+                if isinstance(result, dict):
+                    return ScanResult(
+                        passed=result.get("passed", True),
+                        findings=result.get("findings", []),
+                    )
+            except Exception as e:
+                log.warning("Security scan failed: %s", e)
         # Stub: always passes in test environments
         return ScanResult(passed=True, findings=[])
 
@@ -359,7 +385,8 @@ class CodingAgent(BaseAgent):
         budget_remaining = TOKEN_BUDGET_TOTAL - 300  # reserve for system prompt
 
         for i, mf in enumerate(memory_files[:10]):
-            path = mf.get("path", "")
+            # mf is a MemorySearchResult dataclass, access via attribute not .get()
+            path = getattr(mf, "path", "") or ""
             try:
                 content = Path(path).read_text(errors="replace")
             except OSError:
@@ -448,8 +475,14 @@ class CodingAgent(BaseAgent):
 
     async def _get_security_findings(self) -> list[str]:
         if self._security:
-            findings = await self._security.get_active_findings()
-            return findings if isinstance(findings, list) else []
+            try:
+                resp = await self._security.handle_message(
+                    AgentMessage(type="ACTIVE_FINDINGS", payload={}, sender="coding")
+                )
+                findings = resp.get("findings", []) if isinstance(resp, dict) else []
+                return findings if isinstance(findings, list) else []
+            except Exception:
+                return []
         return []
 
     def _audit(self, action: str, target: str, outcome: str, note: str = "") -> None:

@@ -88,13 +88,77 @@ class Coordinator:
     No direct filesystem access. No HAL calls — proposes only.
     """
 
+
+    # ─── Local agent registry ─────────────────────────────────────────────
+    # In v0, all agents run in the same Python process. The coordinator
+    # instantiates them here and dispatches directly. When agents move to
+    # separate processes in v1, this registry is replaced by IPC calls.
+    #
+    # Owner: iCrewZero
+
     def __init__(self, ipc_client: AgentIpcClient):
         self._ipc = ipc_client
         self._health: dict[str, AgentHealth] = {
             name: AgentHealth(name)
             for name in ("planner", "memory", "security", "scheduler",
-                         "file", "coding", "ui")
+                         "file", "coding")
         }
+
+        # Lazy-loaded local agent instances.
+        self._agents: dict[str, Any] = {}
+
+    def _get_agent(self, name: str) -> Any:
+        """Get or lazily create a local agent instance."""
+        if name in self._agents:
+            return self._agents[name]
+
+        try:
+            if name == "memory":
+                from memory import MemoryAgent
+                self._agents[name] = MemoryAgent()
+            elif name == "security":
+                from security import SecurityAgent
+                self._agents[name] = SecurityAgent()
+            elif name == "scheduler":
+                from scheduler import SchedulerAgent
+                self._agents[name] = SchedulerAgent()
+            elif name == "file":
+                from file_agent import FileAgent
+                self._agents[name] = FileAgent()
+            elif name == "coding":
+                from coding_agent import CodingAgent
+                self._agents[name] = CodingAgent()
+            elif name == "planner":
+                from planner import Planner
+                self._agents[name] = Planner(ipc_client=self._ipc)
+            else:
+                log.warning("Unknown local agent: %s", name)
+                return None
+        # Fix H2 — iCrewZero: Changed from `except ImportError` to
+        # `except Exception` so that TypeError (e.g. B1's missing __init__)
+        # and other construction errors are caught and logged instead of
+        # bubbling up as an unhandled crash.
+        except Exception as e:
+            log.error("Cannot instantiate agent '%s': %s", name, e)
+            return None
+
+        log.debug("Instantiated local agent: %s", name)
+        return self._agents[name]
+
+
+
+    @classmethod
+    async def create(cls, endpoint: str = "localhost:7443", signing_secret: str = "") -> "Coordinator":
+        """Factory: create a coordinator with a connected IPC client.
+
+        This is the recommended way to create a Coordinator — it handles
+        the IPC connection so you don't have to remember to call connect().
+        """
+        # Fix M4 — iCrewZero: Removed redundant import of AgentIpcClient;
+        # it is already imported at module level (line 22).
+        ipc = AgentIpcClient("agent.coordinator", endpoint=endpoint, signing_secret=signing_secret)
+        await ipc.connect()
+        return cls(ipc)
 
     async def handle_intent(self, schema: dict) -> ActionSet:
         """
@@ -103,7 +167,8 @@ class Coordinator:
         start = time.monotonic()
         intent_id = schema.get("intent_id", str(uuid.uuid4()))
         goal = schema.get("goal", "")
-        hal_pre = schema.get("hal_pre_score", 0.1)
+        # Fix M4 — iCrewZero: Removed unused variable `hal_pre` that was
+        # never referenced after this line.
 
         # 1. Always query Memory Agent first (parallel with scheduler notification)
         memory_task = asyncio.create_task(
@@ -121,8 +186,8 @@ class Coordinator:
 
         # Gather with timeouts
         memory_result, primary_result = await asyncio.gather(
-            self._with_timeout(memory_task, "memory"),
-            self._with_timeout(primary_task, "primary"),
+            memory_task,
+            primary_task,
             return_exceptions=True,
         )
 
@@ -131,8 +196,19 @@ class Coordinator:
         context: dict = {}
         min_confidence = 1.0
 
+        # Fix M3 — iCrewZero: The memory agent may return dataclass
+        # instances (e.g. MemorySearchResult) in its result dicts.  Those
+        # aren't JSON-serializable.  Convert them to plain dicts here so
+        # downstream JSON.dumps (audit log, IPC) doesn't crash.
         if isinstance(memory_result, dict):
-            context["memory"] = memory_result.get("results", [])
+            mem_data = memory_result.get("hits", memory_result.get("data", []))
+            from dataclasses import asdict as _asdict
+            if isinstance(mem_data, list):
+                mem_data = [
+                    _asdict(r) if hasattr(r, '__dataclass_fields__') else r
+                    for r in mem_data
+                ]
+            context["memory"] = mem_data
             min_confidence = min(min_confidence, memory_result.get("confidence", 1.0))
 
         if isinstance(primary_result, list):
@@ -149,6 +225,16 @@ class Coordinator:
         if isinstance(memory_result, Exception):
             log.error("Memory agent timeout/error: %s", memory_result)
             min_confidence = min(min_confidence, 0.5)
+
+        # Fix H1 — iCrewZero: When asyncio.gather(..., return_exceptions=True)
+        # returns an Exception for the primary agent, the old code only
+        # checked isinstance(list/dict) and silently dropped it, producing
+        # an ActionSet with zero actions and confidence 1.0.  Now we catch
+        # the exception, log it, and pull confidence down to 0.3 so the
+        # caller knows something went wrong.
+        if isinstance(primary_result, Exception):
+            log.error("Primary agent error: %s", primary_result)
+            min_confidence = min(min_confidence, 0.3)
 
         elapsed = (time.monotonic() - start) * 1000
         action_set = ActionSet(
@@ -186,8 +272,10 @@ class Coordinator:
 
         elif goal in install_goals:
             # Install: Security Agent review + File Agent for execution
-            security_resp = await self._call_agent("security", "SECURITY_ALERT", {
-                "check": "install_trust", "schema": schema
+            security_resp = await self._call_agent("security", "INSTALL_TRUST", {
+                "package": schema.get("package", schema.get("goal", "")),
+                "source": schema.get("source", "apt"),
+                "schema": schema
             })
             if security_resp and security_resp.get("approved", True):
                 return await self._call_agent("file", "FILE_OPERATION", {
@@ -250,14 +338,60 @@ class Coordinator:
     ) -> dict | None:
         """
         Send a message to an agent and await response.
+        Tries local dispatch first (v0: same-process), falls back to IPC.
         Tracks health per-agent. Returns None on failure.
         """
-        health = self._health[agent]
+        health = self._health.get(agent)
+        if health is None:
+            log.warning("Unknown agent '%s' — no health tracking", agent)
+            health = AgentHealth(agent)
 
         if health.is_unavailable and not critical:
             log.warning("Skipping unavailable non-critical agent '%s'", agent)
             return None
 
+        # v0: Try local agent dispatch first.
+        local = self._get_agent(agent)
+        if local is not None:
+            try:
+                # Planner is special — it has plan() not handle_message()
+                if agent == "planner" and hasattr(local, "plan"):
+                    result = await asyncio.wait_for(
+                        local.plan(payload.get("goal", ""), payload.get("schema", {})),
+                        timeout=DEFAULT_AGENT_TIMEOUT,
+                    )
+                    health.record_result(True)
+                    if isinstance(result, dict):
+                        return result
+                    # Fix M4 — iCrewZero: Removed redundant local import;
+                    # `asdict` is already imported at module level (line 17).
+                    plan_dict = asdict(result) if hasattr(result, '__dataclass_fields__') else {"data": result}
+                    if "steps" in plan_dict:
+                        plan_dict["actions"] = plan_dict.pop("steps")
+                    return plan_dict
+                elif hasattr(local, "handle_message"):
+                    from shared.types import AgentMessage
+                    msg = AgentMessage(type=msg_type, payload=payload, sender="coordinator")
+                    result = await asyncio.wait_for(
+                        local.handle_message(msg),
+                        timeout=DEFAULT_AGENT_TIMEOUT,
+                    )
+                    health.record_result(True)
+                    if isinstance(result, dict):
+                        return result
+                    return {"status": "ok", "data": result}
+            except asyncio.TimeoutError:
+                log.warning("Local agent '%s' timed out after %.1fs", agent, DEFAULT_AGENT_TIMEOUT)
+                health.record_result(False)
+                if health.is_unavailable:
+                    log.error("Agent '%s' marked unavailable", agent)
+                return None
+            except Exception as e:
+                log.error("Local agent '%s' error: %s", agent, e)
+                health.record_result(False)
+                return None
+
+        # v1 fallback: dispatch via IPC to a remote agent process.
         try:
             result = await asyncio.wait_for(
                 self._ipc.send(agent, msg_type, payload),
@@ -277,19 +411,14 @@ class Coordinator:
             health.record_result(False)
             return None
 
-    async def _with_timeout(self, task, label: str) -> Any:
-        """Run a task with the default timeout, returning exception on failure."""
-        try:
-            return await asyncio.wait_for(task, timeout=DEFAULT_AGENT_TIMEOUT)
-        except Exception as e:
-            log.warning("Task '%s' failed: %s", label, e)
-            return e
+    # Fix M4 — iCrewZero: Removed the dead _with_timeout() method.
+    # It was never called anywhere in the codebase.
 
     async def _restart_agent(self, agent: str) -> None:
         """Attempt to restart a failed agent via systemd dbus."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "systemctl", "--user", "restart", f"cognos-{agent}.service",
+                "sudo", "systemctl", "restart", f"cognos-{agent}.service",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )

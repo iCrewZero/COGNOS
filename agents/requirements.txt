@@ -1,0 +1,20 @@
+# COGNOS agent framework dependencies
+# ─────────────────────────────────────────────────────
+# NOTE: asyncio is a Python standard library module.
+# Do NOT add it here — it cannot be pip-installed.
+
+# gRPC communication with the Rust IPC server
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
+
+# Semantic vector memory
+chromadb>=0.4.0
+
+# Embedding models for memory queries
+sentence-transformers>=2.2.0
+
+# Async file I/O
+aiofiles>=23.0.0
+
+# Health checking for gRPC
+grpcio-health-checking>=0.36.0

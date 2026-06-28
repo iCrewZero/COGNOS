@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.base_agent import BaseAgent
-from shared.capability_lattice import CapabilityLattice, CapabilityViolation
+# from shared.capability_lattice import CapabilityLattice, CapabilityViolation  # TODO(v1): add capability checks on fs ops
 
 log = logging.getLogger("cognos.file_agent")
 

@@ -1,0 +1,166 @@
+# AppArmor profile for the COGNOS AI daemon (cognos-ai-daemon)
+#
+# Purpose:
+#   Confine the AI daemon process to a least-privilege sandbox. The AI
+#   daemon orchestrates agents, runs inference, and mediates HAL gate
+#   requests — but it must NEVER be able to:
+#     * modify HAL source or policy (immutable to AI)
+#     * read raw user home directories (ANFS mediates all access)
+#     * gain kernel capabilities (sys_admin, sys_module, ptrace, ...)
+#     * escape via ptrace, mount, or signal injection
+#
+# Profile owner: cognos-security
+# Last reviewed: 2025-01-01
+# Enforcement mode: complain (v0) → enforce (post v0.3 audit)
+#
+# Threat model: see docs/THREAT_MODEL.md
+# Formal model: see docs/FORMAL_MODELS.md §9 (Constitutional Invariants)
+#
+# Usage:
+#   Place at /etc/apparmor.d/usr.lib.cognos.cognos-ai-daemon
+#   Load with:  apparmor_parser -r /etc/apparmor.d/usr.lib.cognos.cognos-ai-daemon
+#   Verify with: aa-status | grep cognos-ai-daemon
+
+#include <tunables/global>
+
+profile cognos-ai-daemon /usr/lib/cognos/cognos-ai-daemon {
+  #include <abstractions/base>
+  #include <abstractions/nameservice-strict>
+
+  # --------------------------------------------------------------------
+  # Network rules
+  # --------------------------------------------------------------------
+  # The AI daemon needs:
+  #   * unix stream sockets — IPC with HAL, memory, orchestrator
+  #   * inet/inet6 stream    — restricted TCP to allowlisted endpoints
+  #                            (model servers, telemetry sinks)
+  #   * inet dgram           — DNS / NTP for trust calibration
+  # Outbound TCP endpoints are further restricted by nftables
+  # (see security/nftables/ai-isolation.nft).
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network unix stream,
+
+  # --------------------------------------------------------------------
+  # File rules — deny first, then allow
+  # --------------------------------------------------------------------
+
+  # --- Hard denials: things the AI daemon must NEVER touch -------------
+
+  # Sensitive system files
+  deny /etc/shadow r,
+  deny /etc/passwd w,
+  deny /etc/gshadow r,
+  deny /etc/sudoers rwklx,
+
+  # No direct home access — ANFS provides mediated, audited access.
+  # If the AI daemon tries to read /home/user/* directly, this is a
+  # constitutional violation (see docs/FORMAL_MODELS.md §9).
+  deny /home/** rwklx,
+  deny /root/** rwklx,
+
+  # HAL is immutable to AI. The AI daemon cannot read HAL source,
+  # policy definitions, or risk weights. (HAL enforces itself; this
+  # is defense-in-depth.)
+  deny /etc/cognos/hal/** rwklx,
+  deny /usr/lib/cognos/hal/** rwklx,
+  deny /etc/cognos/hal/risk_weights.toml rwklx,
+
+  # Kernel modules, boot, firmware — out of scope entirely
+  deny /lib/modules/** rwklx,
+  deny /boot/** rwklx,
+  deny /usr/src/** rwklx,
+
+  # Other daemons' state
+  deny /var/lib/cognos/hal/*.lock rwklx,
+  deny /var/lib/cognos/hal/state.bin w,
+
+  # --- Allowed reads ---------------------------------------------------
+
+  # Daemon configuration (read-only)
+  /etc/cognos/ai-daemon.toml r,
+
+  # Policy definitions the daemon evaluates (read-only)
+  /etc/cognos/policies/** r,
+
+  # Read-only access to HAL's audit log — daemon may inspect but
+  # never modify or truncate.
+  /var/lib/cognos/hal/audit.jsonl r,
+
+  # --------------------------------------------------------------------
+  # File rules — read/write state (daemon-owned)
+  # --------------------------------------------------------------------
+
+  # AI daemon working state, scratch, model caches
+  /var/lib/cognos/ai/** rwk,
+  /var/lib/cognos/memory/** rwk,
+
+  # Runtime sockets, PID files, locks
+  /run/cognos/** rw,
+
+  # --------------------------------------------------------------------
+  # Model files — read-only GGUF weights
+  # --------------------------------------------------------------------
+  # Mounted read-only from the read-only /usr partition.
+  /usr/lib/cognos/models/** r,
+
+  # --------------------------------------------------------------------
+  # Private tmp — the daemon must not see host /tmp
+  # --------------------------------------------------------------------
+  # Backed by PrivateTmp=yes in the systemd unit plus a tmpfs mount.
+  /tmp/cognos-ai-*/ rw,
+  /tmp/cognos-ai-*/** rw,
+
+  # --------------------------------------------------------------------
+  # Capability rules — AI daemon gets NO capabilities
+  # --------------------------------------------------------------------
+  # The AI daemon runs as an unprivileged user (cognos-ai) with no
+  # ambient capabilities. These denials are defense-in-depth in case
+  # the binary is ever accidentally granted a capability.
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_ptrace,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability dac_override,
+  deny capability setuid,
+  deny capability setgid,
+  deny capability chown,
+  deny capability fowner,
+  deny capability kill,
+  deny capability mknod,
+
+  # --------------------------------------------------------------------
+  # Signal rules — only init (PID 1 / systemd) may signal the daemon
+  # --------------------------------------------------------------------
+  # The daemon must not be killable by arbitrary processes, and must
+  # not be able to signal other processes.
+  signal receive set=term peer=unconfined,
+  signal receive set=hup peer=unconfined,
+  signal receive set=kill peer=unconfined,
+
+  # --------------------------------------------------------------------
+  # Ptrace — fully denied (no introspection, no injection)
+  # --------------------------------------------------------------------
+  deny ptrace,
+  deny ptrace read,
+  deny ptrace trace,
+  deny ptrace readby,
+  deny ptrace tracedby,
+
+  # --------------------------------------------------------------------
+  # Mount — fully denied (no filesystem tampering)
+  # --------------------------------------------------------------------
+  deny mount,
+  deny mount labels=unconfined,
+  deny umount,
+}
+
+# v0: stub — review before deployment, audit rules are conservative
+# TODO:
+#   * Tighten inet/inet6 stream to specific host/port pairs via
+#     AppArmor rule quals once the model-server allowlist is finalized.
+#   * Add io_uring deny rules (kernel 6.x).
+#   * Move from complain → enforce after the v0.3 soak test.
+#   * Add a companion profile for cognos-agents (sub-process isolation).

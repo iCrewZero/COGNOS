@@ -1,3 +1,6 @@
+//! Runtime state — the in-memory state HAL uses while running.
+
+
 use std::{
     collections::{
         HashMap,

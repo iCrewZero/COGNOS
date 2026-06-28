@@ -1,3 +1,6 @@
+//! Policy engine — loads and evaluates governance policies for HAL decisions.
+
+
 use crate::{
     action_validator::ActionValidator,
 

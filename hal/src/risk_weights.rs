@@ -1,3 +1,6 @@
+//! Risk weights — configurable weights for each risk-model component.
+
+
 use crate::hal_types::{
     IntentSeverity,
     RiskVector,

@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# COGNOS OS — Base Packages
+# Installed into the rootfs during build. One package per line.
+# Lines starting with # are comments.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Core System ──────────────────────────────────────────────────────────────
+systemd
+systemd-sysv
+dbus-broker
+udev
+
+# ─── Networking ───────────────────────────────────────────────────────────────
+iproute2
+iputils-ping
+systemd-resolved
+networkmanager
+wireless-tools
+wpasupplicant
+ca-certificates
+curl
+wget
+
+# ─── Filesystem & Storage ─────────────────────────────────────────────────────
+e2fsprogs
+btrfs-progs
+dosfstools
+squashfs-tools
+cryptsetup
+lvm2
+gdisk
+
+# ─── Security ─────────────────────────────────────────────────────────────────
+apparmor
+apparmor-utils
+apparmor-profiles
+# Owner: iCrewZero — nftables is required by the ai-isolation.nft ruleset (/usr/sbin/nft)
+nftables
+sudo
+openssh-client
+gnupg
+
+# ─── eBPF Tooling (for COGNOS telemetry) ──────────────────────────────────────
+bpftool
+# Owner: iCrewZero — replaced libbpf-dev (dev pkg) with runtime-only package
+libbpf0.8-0
+
+# ─── Shell & Utilities ────────────────────────────────────────────────────────
+bash
+coreutils
+util-linux
+less
+nano
+htop
+procps
+psmisc
+lsof
+strace
+file
+pciutils
+usbutils
+
+# ─── Locale & Timezone ────────────────────────────────────────────────────────
+locales
+tzdata
+
+# ─── Boot ─────────────────────────────────────────────────────────────────────
+systemd-boot
+efibootmgr
+initramfs-tools
+
+# ─── Python (for COGNOS agents) ───────────────────────────────────────────────
+python3
+python3-pip
+python3-venv
+
+# ─── Display / Desktop (minimal GTK4 base for COGNOS UI) ──────────────────────
+wayland-protocols
+sway
+foot
+libgtk-4-1
+# Owner: iCrewZero — added sway config dependencies referenced by sway.config
+wireplumber
+brightnessctl
+wl-clipboard
+cliphist
+polkit-gnome

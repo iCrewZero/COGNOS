@@ -152,7 +152,7 @@ impl DisambiguationEngine {
                 schema
                     .candidate_actions
                     .iter()
-                    .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+                    .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
                     .cloned()
                     .unwrap()
             });
@@ -208,7 +208,7 @@ impl DisambiguationEngine {
             let selected = schema
                 .candidate_actions
                 .iter()
-                .max_by(|a, b| a.recency_score.partial_cmp(&b.recency_score).unwrap())?
+                .max_by(|a, b| a.recency_score.partial_cmp(&b.recency_score).unwrap_or(std::cmp::Ordering::Equal))?
                 .clone();
 
             return Some(ResolvedIntent {
@@ -238,7 +238,7 @@ impl DisambiguationEngine {
 
         // Recency: large gap between top two scores → auto-pick, no question
         let mut by_recency: Vec<f32> = candidates.iter().map(|c| c.recency_score).collect();
-        by_recency.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        by_recency.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         if by_recency[0] - by_recency.get(1).copied().unwrap_or(0.0) > 0.4 {
             return CandidateDifferenceKind::Recency;
         }

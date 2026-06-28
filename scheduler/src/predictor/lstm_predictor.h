@@ -5,6 +5,7 @@
 #include <deque>
 #include <string>
 #include <cstdint>
+#include <vector>
 #include <onnxruntime/core/session/onnxruntime_c_api.h>
 
 namespace cognos {
@@ -51,30 +52,37 @@ public:
     explicit LstmPredictor(const std::string& model_path);
     ~LstmPredictor();
 
+    LstmPredictor(const LstmPredictor&) = delete;
+    LstmPredictor& operator=(const LstmPredictor&) = delete;
+
     void       push_event(const Event& event);
     Prediction predict();
     bool       is_loaded() const { return session_ != nullptr; }
-    std::string model_info() const { return model_info_; }
+    const std::string& model_info() const { return model_info_; }
+    const std::string& last_error() const { return last_error_; }
 
 private:
-    OrtEnv*           env_     = nullptr;
-    OrtSession*       session_ = nullptr;
-    OrtSessionOptions* opts_   = nullptr;
-    OrtMemoryInfo*    mem_info_ = nullptr;
+    const OrtApi*      api_          = nullptr;
+    OrtEnv*            env_          = nullptr;
+    OrtSessionOptions* opts_         = nullptr;
+    OrtMemoryInfo*     mem_info_     = nullptr;
+    OrtSession*        session_      = nullptr;
+    OrtRunOptions*     run_opts_     = nullptr;
+    OrtValue*          input_tensor_ = nullptr;
 
-    // Pre-allocated tensors (reused across inferences)
     std::vector<float> input_data_;
     std::vector<float> app_out_;
     std::vector<float> domain_out_;
     std::vector<float> conf_out_;
 
-    // Circular event buffer — last SEQ_LEN events
     std::deque<std::array<float, FEATURE_DIM>> ring_;
     std::string model_info_;
+    std::string last_error_;
 
-    const OrtApi* api_ = nullptr;
-
-    void run_once(float* app_p, float* dom_p, float* conf_p);
+    bool check_ort(OrtStatus* status, const char* context);
+    bool validate_model_io();
+    bool rebuild_input_tensor();
+    bool run_once(float* app_p, float* dom_p, float* conf_p);
     void softmax(float* data, int n);
 };
 

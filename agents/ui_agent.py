@@ -24,7 +24,7 @@ from shared.base_agent import BaseAgent
 
 log = logging.getLogger("cognos.ui")
 
-RUN_DIR = Path("/run/cognos")
+RUN_DIR = Path.home() / ".cognos" / "run"
 UI_STATE_FILE = RUN_DIR / "ui-state.json"
 NOTIF_SOCK = RUN_DIR / "notifications.sock"
 RESOURCES_FILE = RUN_DIR / "resources.json"
@@ -67,6 +67,7 @@ class UIAgent(BaseAgent):
     def __init__(self, memory_client=None):
         super().__init__("ui")
         self._memory = memory_client
+        self._prev_cpu: tuple[int, int] | None = None
         self._agent_status: dict[str, str] = {
             name: "idle" for name in
             ("planner", "memory", "security", "scheduler", "file", "coding")
@@ -241,7 +242,7 @@ class UIAgent(BaseAgent):
         while True:
             await asyncio.sleep(2)
             try:
-                stats = await asyncio.get_event_loop().run_in_executor(
+                stats = await asyncio.get_running_loop().run_in_executor(
                     None, self._read_system_stats
                 )
                 await self.update_resource_stats(stats)
@@ -263,14 +264,45 @@ class UIAgent(BaseAgent):
             ai_cpu_percent=ai_cpu,
         )
 
+    # NOTE: _prev_cpu must be instance-level (set in __init__), NOT class-level.
+    # A class-level mutable default would be shared across all UIAgent instances,
+    # corrupting CPU delta calculations. The old __post_init__ was dead code
+    # because UIAgent inherits from BaseAgent (not a dataclass), so it never ran.
+    # This comment serves as a guard against re-introducing that bug.
+
     def _read_cpu_percent(self) -> float:
+        """Read current CPU usage as a percentage.
+
+        Uses the delta between two /proc/stat reads to get the actual
+        current usage, not the average since boot. The first call
+        returns 0.0 because there's no previous sample to diff against.
+        """
         try:
             with open("/proc/stat") as f:
-                line = f.readline().split()
-            user, nice, system, idle = int(line[1]), int(line[2]), int(line[3]), int(line[4])
-            total = user + nice + system + idle
-            active = user + nice + system
-            return round(100.0 * active / max(total, 1), 1)
+                parts = f.readline().split()
+            user = int(parts[1])
+            nice = int(parts[2])
+            system = int(parts[3])
+            idle = int(parts[4])
+            iowait = int(parts[5]) if len(parts) > 5 else 0
+            current_total = user + nice + system + idle + iowait
+            current_active = user + nice + system
+
+            if self._prev_cpu is None:
+                # First call — store and return 0.
+                self._prev_cpu = (current_total, current_active)
+                return 0.0
+
+            prev_total, prev_active = self._prev_cpu
+            self._prev_cpu = (current_total, current_active)
+
+            delta_total = current_total - prev_total
+            delta_active = current_active - prev_active
+
+            if delta_total <= 0:
+                return 0.0
+
+            return round(100.0 * delta_active / delta_total, 1)
         except OSError:
             return 0.0
 

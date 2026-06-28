@@ -1,0 +1,11 @@
+# COGNOS CLI — companion crate (deprecated; use cli/ instead)
+#
+# This directory is kept for compatibility but is NOT a workspace member.
+# The canonical CLI lives at cli/ and produces the cognos binary.
+#
+# Owner: iCrewZero
+
+[package]
+name = "cognos-cli-compat"
+version = "0.1.0"
+edition = "2021"

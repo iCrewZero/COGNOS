@@ -1,5 +1,6 @@
 /// Audit Log System for COGNOS/OS.
 ///
+///
 /// Every AI action is logged here in plain text + JSON lines.
 /// Tamper-evident via chained SHA-256 hashes.
 /// The user can read, verify, export, or wipe it at any time.

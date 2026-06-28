@@ -1,0 +1,13 @@
+# COGNOS OS — AI Services Target
+# All COGNOS service units declare PartOf=cognos.target and WantedBy=cognos.target.
+# This target is started after the network is up.
+#
+# Owner: iCrewZero
+
+[Unit]
+Description=COGNOS OS AI Services Target
+Requires=network.target
+After=network.target
+
+[Install]
+WantedBy=multi-user.target

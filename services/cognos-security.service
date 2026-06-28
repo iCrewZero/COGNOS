@@ -1,0 +1,19 @@
+# COGNOS OS — Security Scanner Service
+#
+# Runs the static analysis scanner and behavioral monitor.
+# v0: stub — security checks are done inline by the Python SecurityAgent.
+#
+# Owner: iCrewZero
+[Unit]
+Description=COGNOS Security Scanner
+After=network.target
+PartOf=cognos.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
+SyslogIdentifier=cognos-security
+
+[Install]
+WantedBy=cognos.target

@@ -1,0 +1,82 @@
+#!/usr/sbin/nft -f
+# ═══════════════════════════════════════════════════════════════════════════════
+# COGNOS OS — AI Agent Network Isolation Ruleset
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Purpose:
+#   Enforces kernel-level network isolation for AI agents running on COGNOS OS.
+#   AI agents are bound to a dedicated cgroup whose egress traffic originates
+#   from 127.0.0.2 (IPv4) / fd00:c067::/64 (IPv6). This ruleset permits
+#   only traffic to user-approved API endpoints, plus DNS and loopback.
+#
+#   This is a backstop behind HAL: even if a compromised agent bypasses HAL
+#   capability checks, the kernel will still drop unauthorized egress.
+#
+#   Rule: AI cannot phone home. Enforced by kernel, not config.
+#
+# Install:
+#   install -m 0644 ai-isolation.nft /etc/cognos/nftables/ai-isolation.nft
+#   nft -f /etc/cognos/nftables/ai-isolation.nft
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Owner: iCrewZero — flush only our table, not the entire ruleset.
+# The old "flush ruleset" would destroy ALL nftables tables including
+# any host firewall rules. Table-scoped flush is safe.
+table inet cognos_ai_isolation { flush table }
+
+    # ─── Sets ──────────────────────────────────────────────────────────────────
+
+    # Source addresses assigned to the AI cgroup (bind-on-connect). Using a
+    # loopback-range address means agents cannot receive inbound traffic from
+    # the network without an explicit forward/DNAT rule.
+    set ai_agents_ipv4 {
+        type ipv4_addr
+        flags interval
+        elements = { 127.0.0.2 }
+    }
+
+    set ai_agents_ipv6 {
+        type ipv6_addr
+        flags interval
+        elements = { fd00:c067::/64 }
+    }
+
+    # User-approved API endpoints. MUST be populated by HAL policy before
+    # agents are allowed to run. An empty set means all AI egress is
+    # dropped except DNS (port 53) and loopback (127.0.0.1).
+    set allowed_api_endpoints {
+        type ipv4_addr
+        flags interval
+        elements = { /* user-specified APIs */ }
+    }
+
+    # ─── Input Chain ───────────────────────────────────────────────────────────
+    # Input policy unchanged: COGNOS does not alter host ingress here.
+    chain input {
+        type filter hook input priority 0; policy accept;
+    }
+
+    # ─── Output Chain ──────────────────────────────────────────────────────────
+    chain output {
+        type filter hook output priority 0; policy accept;
+
+        # Deny-by-default: AI agents may only reach allowlisted APIs.
+        # Logged drops are ingested by the HAL forensic pipeline.
+        ip saddr @ai_agents_ipv4 ip daddr != @allowed_api_endpoints log prefix "cognos-ai-net-deny: " drop comment "AI agents can only reach allowlisted APIs"
+
+        # IPv6: AI agents may not reach anything but loopback.
+        ip6 saddr @ai_agents_ipv6 ip6 daddr != ::1 log prefix "cognos-ai-net6-deny: " drop
+
+        # Explicitly permitted egress.
+        # Owner: iCrewZero — allow DNS over both TCP and UDP (standard DNS uses UDP).
+        ip saddr @ai_agents_ipv4 tcp dport 53 accept comment "DNS allowed (TCP)"
+        ip saddr @ai_agents_ipv4 udp dport 53 accept comment "DNS allowed (UDP)"
+        ip saddr @ai_agents_ipv4 ip daddr 127.0.0.1 accept comment "loopback allowed"
+    }
+}
+
+# TODO(v1): per-agent endpoint sets, quota/rate limiting, audit-log to a
+#           dedicated ringbuffer, integration with HAL capability grants,
+#           signed ruleset updates.
+# v0: stub — endpoints list must be populated by HAL policy

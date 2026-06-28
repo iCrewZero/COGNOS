@@ -1,0 +1,30 @@
+# DEPRECATED: Use cognos-ipc-grpc (ipc/grpc) instead.
+# This shim exists so old code that depends on "cognos-ipc" still compiles.
+#
+# Owner: iCrewZero
+
+[package]
+name = "cognos-ipc"
+version = "0.1.0"
+edition = "2021"
+description = "DEPRECATED — use cognos-ipc-grpc instead"
+
+[lib]
+name = "cognos_ipc"
+path = "src/lib.rs"
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"
