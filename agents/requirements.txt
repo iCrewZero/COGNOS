@@ -4,7 +4,7 @@
 # Do NOT add it here — it cannot be pip-installed.
 
 # gRPC communication with the Rust IPC server
-grpcio>=1.60.0
+grpcio>=1.81.1
 grpcio-tools>=1.60.0
 
 # Semantic vector memory
