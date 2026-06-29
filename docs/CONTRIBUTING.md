@@ -17,7 +17,7 @@ The barrier to contribution is intentionally low. You do not need to be a kernel
 **Hard rules:**
 - HAL changes: maintainer review only, no exceptions
 - No AI co-author tags on any file in `hal/`
-- Every PR needs a human-written description of what changed and why
+- Every PR needs a GPG-signed by iCrewZero description of what changed and why
 - Do not merge with failing CI checks
 
 **Current contributors:**

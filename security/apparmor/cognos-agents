@@ -1,0 +1,43 @@
+# AppArmor profile for COGNOS Python agent processes
+# Owner: iCrewZero
+#
+# The agents run as user 'cognos' and communicate via gRPC to the IPC server.
+# They should not be able to: modify HAL files, write to system directories,
+# or access the network directly (all network goes through the IPC server).
+
+#include <tunables/global>
+
+profile cognos-agents /opt/cognos/venv/bin/python3 flags=(attach_disconnected) {
+  #include <abstractions/base>
+
+  # Python interpreter and venv
+  /opt/cognos/venv/** rix,
+  /opt/cognos/agents/** r,
+
+  # Read-only access to COGNOS config
+  # Owner: iCrewZero — agents must not read HAL policy or risk weights.
+  deny /etc/cognos/hal/** r,
+  deny /etc/cognos/hal.toml r,
+  /etc/cognos/** r,
+
+  # Agent state (write only to designated dirs)
+  /var/lib/cognos/agents/** rwk,
+  /var/log/cognos/** rw,
+
+  # HAL is read-only for agents — they propose, never modify
+  deny /var/lib/cognos/hal/** w,
+  deny /etc/cognos/hal.toml w,
+
+  # No direct network — all traffic through IPC server
+  network deny,
+
+  # No ptrace, no signal to other processes
+  deny ptrace,
+  deny signal,
+
+  # No capability to gain privileges
+  deny capability,
+
+  # Allow tmp for Python tempfile
+  /tmp/** rwk,
+}

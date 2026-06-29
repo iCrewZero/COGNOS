@@ -34,13 +34,16 @@ gdisk
 apparmor
 apparmor-utils
 apparmor-profiles
+# Owner: iCrewZero — nftables is required by the ai-isolation.nft ruleset (/usr/sbin/nft)
+nftables
 sudo
 openssh-client
 gnupg
 
 # ─── eBPF Tooling (for COGNOS telemetry) ──────────────────────────────────────
 bpftool
-libbpf-dev
+# Owner: iCrewZero — replaced libbpf-dev (dev pkg) with runtime-only package
+libbpf0.8-0
 
 # ─── Shell & Utilities ────────────────────────────────────────────────────────
 bash
@@ -76,3 +79,9 @@ wayland-protocols
 sway
 foot
 libgtk-4-1
+# Owner: iCrewZero — added sway config dependencies referenced by sway.config
+wireplumber
+brightnessctl
+wl-clipboard
+cliphist
+polkit-gnome

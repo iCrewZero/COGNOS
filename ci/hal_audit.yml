@@ -1,0 +1,277 @@
+# HAL Audit CI Workflow
+#
+# What this does: Makes sure the Human Authority Layer (HAL) hasn't been
+# tampered with. HAL is the line between AI actions and human control —
+# if HAL breaks, nothing else matters.
+#
+# Checks:
+#   1. GPG signature gate      — every commit to hal/ must be signed by
+#                                iCrewZero's personal key. No exceptions.
+#   2. Formal model tests      — risk scoring, capability lattice,
+#                                audit chain, autonomy levels.
+#   3. Formal verification     — policy examples type-check against the
+#                                formal verifier.
+#   4. Risk-model coverage     — 80%+ tarpaulin coverage gate.
+#   5. Audit-chain integrity   — tamper-evidence still holds.
+#
+# Owner: iCrewZero
+# Last reviewed: 2025-06-23
+
+name: HAL Audit
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'hal/**'
+      - 'governance/**'
+      - 'security/**'
+      - 'ci/hal_audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hal/**'
+      - 'governance/**'
+      - 'security/**'
+      - 'ci/hal_audit.yml'
+  schedule:
+    # 03:00 UTC daily
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  # The one GPG key fingerprint allowed to commit to hal/.
+  # This key must never exist in any CI or agent environment.
+  HAL_OWNER_FINGERPRINT: '${{ secrets.HAL_OWNER_GPG_FINGERPRINT }}'
+
+jobs:
+  hal-provenance-check:
+    name: HAL Provenance (GPG signature gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import iCrewZero's public key
+        run: |
+          # The public half of the signing key is stored as a repo secret.
+          # Only the public key is needed here — CI verifies signatures,
+          # it never signs anything.
+          echo "${{ secrets.HAL_OWNER_GPG_PUBKEY }}" | gpg --import
+
+      - name: Verify every hal/ commit is signed by iCrewZero
+        run: |
+          set -euo pipefail
+
+          # Get every commit that touches hal/src/
+          HAL_COMMITS=$(git log --all --format='%H' -- hal/src/)
+
+          if [ -z "$HAL_COMMITS" ]; then
+            echo "OK: no commits touching hal/src/ found."
+            exit 0
+          fi
+
+          UNSIGNED=0
+          WRONG_KEY=0
+
+          for commit in $HAL_COMMITS; do
+            # Does this commit have a GPG signature at all?
+            if ! git verify-commit "$commit" >/dev/null 2>&1; then
+              echo "::error::Commit $commit touching hal/src/ has NO GPG signature"
+              UNSIGNED=$((UNSIGNED + 1))
+              continue
+            fi
+
+            # Does the signing key match iCrewZero's fingerprint?
+            SIGNER=$(git verify-commit --raw "$commit" 2>&1 \
+              | grep -oP 'keyid \K[A-F0-9]+' | head -1)
+
+            if [ "$SIGNER" != "$HAL_OWNER_FINGERPRINT" ]; then
+              echo "::error::Commit $commit signed by $SIGNER, not $HAL_OWNER_FINGERPRINT"
+              WRONG_KEY=$((WRONG_KEY + 1))
+            fi
+          done
+
+          if [ "$UNSIGNED" -gt 0 ] || [ "$WRONG_KEY" -gt 0 ]; then
+            echo "::error::$UNSIGNED unsigned commits, $WRONG_KEY wrong-key commits"
+            exit 1
+          fi
+
+          TOTAL=$(echo "$HAL_COMMITS" | wc -l)
+          echo "OK: all $TOTAL commits to hal/src/ are signed by iCrewZero"
+
+  hal-formal-model-test:
+    name: HAL Formal Model Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-hal-formal-${{ hashFiles('hal/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-hal-formal-
+
+      - name: Run formal model tests
+        run: |
+          cargo test -p cognos-hal \
+            --test risk_scorer_tests \
+            --test intent_to_hal \
+            formal_model
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-formal-model-test-results
+          path: |
+            target/test-results/
+            hal/tests/
+
+  formal-verification:
+    name: Formal Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-formal-verifier-${{ hashFiles('governance/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-formal-verifier-
+
+      - name: Run formal verifier on policy examples
+        run: |
+          cargo run -p cognos-governance --bin formal_verifier -- \
+            --policies governance/policies/ \
+            --models docs/FORMAL_MODELS.md \
+            --strict
+
+      - name: Verify constitutional invariants
+        run: |
+          cargo test -p cognos-governance constitutional_invariants -- --nocapture
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-verification-report
+          path: |
+            target/formal-verification-report.json
+            governance/policies/
+
+  risk-model-coverage:
+    name: Risk Model Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-tarpaulin-${{ hashFiles('hal/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-tarpaulin-
+
+      - name: Run coverage on cognos-hal
+        run: |
+          cargo tarpaulin \
+            -p cognos-hal \
+            --out xml \
+            --output-dir target/coverage \
+            --fail-under 80 \
+            --exclude-files hal/src/main.rs
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hal-coverage-report
+          path: target/coverage/
+
+  audit-chain-integrity:
+    name: Audit Chain Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-audit-chain-${{ hashFiles('hal/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit-chain-
+
+      - name: Run audit chain integrity test
+        run: |
+          # Check that the hash chain is append-only and tamper-evident.
+          cargo test -p cognos-hal audit_chain -- --nocapture --test-threads=1
+
+      - name: Verify audit chain against production sample
+        run: |
+          cargo run -p cognos-hal --bin audit_chain_verify -- \
+            --audit-file /var/lib/cognos/hal/audit.jsonl \
+            --genesis-hash 0 \
+            --strict
+
+      - name: Upload audit chain report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-chain-integrity-report
+          path: |
+            target/audit-chain-report.json
+            hal/src/audit_chain.rs

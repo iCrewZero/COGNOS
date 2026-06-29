@@ -354,7 +354,7 @@ THREAT: Jailbreak via Intent Input
   Mitigation: HAL operates on action graph, not raw LLM output.
               The LLM cannot instruct HAL — HAL scores the
               proposed action independently of how it was generated.
-              HAL is human-written and cannot be reasoned around.
+              HAL is GPG-signed by iCrewZero and cannot be reasoned around.
 
 THREAT: Hostile Package via UNIPKG
   Vector: malicious package passes trust scoring and
@@ -418,7 +418,7 @@ SYSTEM ARCHITECTURE
 └────────────────────────┬────────────────────────────────┘
                          │ proposed action set
 ┌────────────────────────▼────────────────────────────────┐
-│         HUMAN APPROVAL LAYER (HAL) — human-written only  │
+│         HUMAN APPROVAL LAYER (HAL) — GPG-signed by iCrewZero only  │
 │                                                          │
 │  R(A) computed from formal risk model                    │
 │  [0.0,0.3) silent  [0.3,0.6) notify  [0.6,0.8) confirm  │
@@ -699,7 +699,7 @@ ComponentTechnologyReasonKernelLinux 6.x + PREEMPT_RTReal-time, battle-testedIni
 AI Stack
 ComponentTechnologyReasonLocal LLMllama.cpp (Q4_K_M GGUF)Fast, CPU+GPU, no Python overheadSchema validationCustom Rust validatorRejects malformed LLM outputVibe-codingCodestral via OllamaLocal, <5ms, code-specializedOrchestrationPython 3.12 + asyncioAgent logic, fast iterationVector DBChromaDB (local)Semantic memory, embeddedEmbeddingsall-MiniLM-L6-v2 (22MB)Fast, high quality, tinyBehavior modelLSTM → ONNX → C++Prediction, zero Python at runtimeAgent frameworkCustom (no LangChain)Full latency controlCloud fallbackClaude APIComplex reasoning, vibe-coding
 System Programming
-ComponentTechnologyTokenizer, UNIPKG, hot pathsRustKernel modules, eBPFCHAL (all of it)Rust — human-written onlyAI daemon, agentsPython asyncGUI shellRust + GTK4ANFS FUSE overlayRust (fuser crate)LSTM runtimeC++ (ONNX Runtime)
+ComponentTechnologyTokenizer, UNIPKG, hot pathsRustKernel modules, eBPFCHAL (all of it)Rust — GPG-signed by iCrewZero onlyAI daemon, agentsPython asyncGUI shellRust + GTK4ANFS FUSE overlayRust (fuser crate)LSTM runtimeC++ (ONNX Runtime)
 Performance Targets
 MetricTargetIntent to first action<20ms local, <3ms cache hitApp cold start (preloaded)<100msApp cold start (cold)<800msContext restoration<200ms (cognitive preload active)File semantic search<50msDisambiguation question<100ms from ambiguity detectionAI memory footprint<1.2GB RAMBackground AI CPU<3% at idleBoot to desktop<8 secondsUNIPKG resolution<2 secondsVibe-code completion<5ms local
 
@@ -719,7 +719,7 @@ Ground rules:
 
 AI never commits without human diff review
 Every AI-generated kernel module gets human security audit
-HAL: human-written only, zero exceptions
+HAL: GPG-signed by iCrewZero only, zero exceptions
 Don't ship what you don't understand — ask until you do
 AI explains every non-obvious decision before merge
 
@@ -734,7 +734,7 @@ Performance-tuned Linux base (PREEMPT_RT, cgroups v2, io_uring, eBPF)
 Wayland desktop, Sway compositor
 UNIPKG v1 — Flatpak + APT (Rust, vibe-coded)
 AI terminal assistant (shell mode only)
-HAL v0 — skeleton, human-written
+HAL v0 — skeleton, GPG-signed by iCrewZero
 Formal models documented and reviewed
 
 Phase 2 — Memory (Months 5–7)

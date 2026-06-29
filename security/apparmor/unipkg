@@ -1,0 +1,38 @@
+# AppArmor profile for COGNOS unipkg (package manager)
+# Owner: iCrewZero
+#
+# unipkg installs packages from trusted sources. It needs network access
+# to fetch packages but should be confined to its download/staging area.
+
+#include <tunables/global>
+
+profile cognos-unipkg /usr/lib/cognos/unipkg {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # unipkg binary
+  /usr/lib/cognos/unipkg mr,
+
+  # Package staging and installation
+  /var/cache/cognos/unipkg/** rwk,
+  /var/lib/cognos/unipkg/** rwk,
+  /opt/cognos/packages/** rwk,
+
+  # Read-only access to COGNOS config and trust DB
+  /etc/cognos/** r,
+  /var/lib/cognos/trust/** r,
+
+  # Network for fetching packages (restricted to allowed endpoints by nftables)
+  network inet stream,
+
+  # No direct filesystem access outside COGNOS dirs
+  deny /home/** w,
+  deny /etc/shadow r,
+  deny /etc/passwd w,
+
+  # Sandbox execution for post-install scripts
+  /opt/cognos/sandbox/** rix,
+
+  # Allow tmp for staging
+  /tmp/cognos-unipkg-*/** rwk,
+}

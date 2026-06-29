@@ -1,3 +1,6 @@
+//! Session context — tracks per-user session data for trust and risk scoring.
+
+
 use chrono::Utc;
 
 use crate::hal_types::{

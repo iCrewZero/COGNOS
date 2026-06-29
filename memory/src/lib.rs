@@ -17,3 +17,16 @@ pub mod query;
 pub use embedder::{Embedder, HashEmbedder, EMBED_DIM};
 pub use indexer::{IndexError, IndexRecord, Indexer};
 pub use query::{cosine, search, SearchResult};
+
+// Sub-crates for richer memory backends.
+// These are optional — the core memory (embedder + indexer + query) works
+// without them. They need additional dependencies (reqwest, etc.) that
+// are added to memory/Cargo.toml.
+// Uncomment when sub-crates have matching lib names and the chromadb
+// feature gate is ready.
+#[cfg(feature = "chromadb")]
+pub mod chromadb;
+// Uncomment when sub-crate has matching lib name and the fabric
+// feature gate is ready.
+#[cfg(feature = "fabric")]
+pub mod fabric;

@@ -1,3 +1,6 @@
+//! HAL Provenance — tracks where code came from and verifies signatures.
+//!
+
 use sha2::{
     Digest,
     Sha256,

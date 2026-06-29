@@ -1,0 +1,53 @@
+# COGNOS/OS — Python Agent Pool systemd unit
+#
+# Runs all Python agents (coordinator, planner, memory, security, scheduler,
+# file, coding, ui) in a single process. In v1 each agent gets its own unit.
+#
+# Owner: iCrewZero
+[Unit]
+Description=COGNOS Python Agent Pool — coordinator, planner, memory, security, scheduler
+Documentation=https://cognos.os/docs/agents
+# Owner: iCrewZero — added cognos-hal.service dependency (every COGNOS service needs HAL)
+After=network.target cognos-ipc.service cognos-hal.service
+Wants=cognos-ipc.service cognos-hal.service
+PartOf=cognos.target
+
+[Service]
+Type=simple
+User=cognos
+Group=cognos
+
+# The coordinator is the entrypoint — it imports and runs all other agents.
+ExecStart=/opt/cognos/venv/bin/python3 -m coordinator
+
+WorkingDirectory=/opt/cognos/agents
+Environment=PYTHONPATH=/opt/cognos/agents
+Environment=COGNOS_IPC_ENDPOINT=localhost:7443
+
+# Slice limits — the agent pool runs inside the cognos slice
+Slice=cognos.slice
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+
+# --- Restart policy ---
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+SyslogIdentifier=cognos-agents
+
+[Install]
+WantedBy=cognos.target

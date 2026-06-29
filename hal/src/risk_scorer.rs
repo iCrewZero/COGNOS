@@ -1,6 +1,5 @@
 /// HAL Risk Scorer — full v1 formal model for COGNOS/OS.
 ///
-/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship. CI enforces this.
 ///
 /// Implements the formal risk model:
 ///   R(A) = w1·Irreversibility(A) + w2·Scope(A) + w3·TrustContext(A)
@@ -10,7 +9,7 @@
 /// All weights sum to 1.0. All component scores ∈ [0.0, 1.0].
 /// Result is clamped to [0.0, 1.0] and hard floors applied last.
 
-use chrono::{DateTime, Local, Timelike, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 // ─── Component enums ──────────────────────────────────────────────────────────

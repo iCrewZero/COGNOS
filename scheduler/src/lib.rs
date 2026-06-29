@@ -20,3 +20,9 @@ pub use resource_policy::{
     AI_SLICE, ALLOWED_GOVERNORS,
 };
 pub use telemetry::{FixedReader, ProcfsReader};
+
+// Runtime and predictor are declared as modules but may need dependency
+// fixes before they compile. Wire them in so `cargo check` reports
+// real errors instead of silent dead-code.
+pub mod runtime;
+pub mod predictor;

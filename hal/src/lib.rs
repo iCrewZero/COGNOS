@@ -1,5 +1,6 @@
 //! COGNOS Human Approval Layer (HAL).
 //!
+//!
 //! Library surface:
 //! - [`risk_scorer`] — deterministic risk formula and hard floors
 //! - [`audit_log`] — tamper-evident JSONL audit trail
@@ -50,3 +51,28 @@ pub use trust_calibration::{ActionClass, Feedback, TrustCalibration};
 
 #[cfg(unix)]
 pub use approval_flow::{GateReason, GateRequest, GateResponse, HalDaemon};
+
+pub mod audit_chain;
+pub mod authority_compressor;
+pub mod autonomous_constitution;
+pub mod autonomy_controller;
+pub mod behavior_monitor;
+pub mod capability_lattice;
+pub mod cognitive_equilibrium;
+pub mod cognitive_firewall;
+pub mod continuity_engine;
+pub mod existential_governor;
+pub mod forensic_replay;
+pub mod governance_kernel;
+pub mod meta_governance;
+pub mod recovery_kernel;
+pub mod recursion_limiter;
+pub mod recursive_identity;
+pub mod reputation_engine;
+pub mod restraint_runtime;
+pub mod score_fusion;
+pub mod self_preservation;
+pub mod self_rewrite_monitor;
+pub mod syscall_tracker;
+pub mod temporal_trust;
+pub mod trust_heuristics;

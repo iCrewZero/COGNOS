@@ -1,0 +1,61 @@
+# cognoS/OS — Orchestrator systemd unit
+#
+# Purpose:
+#   Runs the COGNOS orchestrator: consumes validated action graphs from the
+#   intent engine, expands them into multi-agent task graphs, and drives the
+#   executor runtime against the scheduler.
+#
+# Dependencies:
+#   - cognos-hal.service    (every node in the graph must pass HAL gating)
+#   - cognos-intent.service (consumes its action graphs)
+#   - Wants cognos-intent but not cognos-memory (orchestrator is stateless
+#     across reboots; durable state lives in the memory service)
+#
+# Owner: COGNOS core team
+# Manpage: https://cognos.os/docs/orchestrator
+[Unit]
+Description=COGNOS orchestrator — multi-agent task graph executor
+Documentation=https://cognos.os/docs/orchestrator
+After=cognos-hal.service cognos-intent.service
+Wants=cognos-intent.service
+PartOf=cognos.target
+
+[Service]
+Type=exec
+User=cognos
+Group=cognos
+ExecStart=/usr/lib/cognos/cognos-orchestrator --config /etc/cognos/orchestrator.toml
+
+# Task graph staging + ephemeral runtime state
+RuntimeDirectory=cognos
+StateDirectory=cognos/orchestrator
+WorkingDirectory=/var/lib/cognos/orchestrator
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+
+# --- Restart policy ---
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+SyslogIdentifier=cognos-orchestrator
+
+[Install]
+WantedBy=cognos.target
+
+# v0: stub — orchestrator binary path is illustrative
+# TODO(v1): add Slice=cognos-orchestrator.slice once cgroup accounting is wired
+# TODO(v1): add ExecReload that drains in-flight task graphs before HUP

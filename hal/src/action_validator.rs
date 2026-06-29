@@ -1,3 +1,6 @@
+//! Action validator — checks proposed actions against HAL policy before execution.
+
+
 use regex::Regex;
 
 use crate::{

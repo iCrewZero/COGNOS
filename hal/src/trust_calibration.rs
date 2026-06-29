@@ -1,6 +1,5 @@
 /// HAL Trust Calibration — per-user interrupt frequency tuning.
 ///
-/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship.
 ///
 /// The problem: HAL interrupt frequency has no universally correct answer.
 /// This module lets the system learn what each user considers worth interrupting for.

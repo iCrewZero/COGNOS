@@ -59,7 +59,7 @@ BINARY_EXTENSIONS = {
 # ─── Data structures ─────────────────────────────────────────────────────────
 
 @dataclass
-class MemoryResult:
+class MemorySearchResult:
     path: str
     relevance_score: float
     last_session_summary: str
@@ -137,7 +137,7 @@ class MemoryAgent(BaseAgent):
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
-    async def query(self, intent_schema: dict) -> list[MemoryResult]:
+    async def query(self, intent_schema: dict) -> list[MemorySearchResult]:
         """
         Answer a semantic query from the orchestrator.
         Returns up to 5 ranked results with context.
@@ -149,7 +149,7 @@ class MemoryAgent(BaseAgent):
         if not query_text:
             return []
 
-        embedding = await asyncio.get_event_loop().run_in_executor(
+        embedding = await asyncio.get_running_loop().run_in_executor(
             None, self._embedder.encode, query_text
         )
 
@@ -177,7 +177,7 @@ class MemoryAgent(BaseAgent):
 
             final_score = min(1.0, relevance + recency_boost + co_boost)
 
-            items.append(MemoryResult(
+            items.append(MemorySearchResult(
                 path=meta["path"],
                 relevance_score=final_score,
                 last_session_summary=meta.get("last_session_summary", ""),
@@ -226,7 +226,7 @@ class MemoryAgent(BaseAgent):
         """Track cursor position for context restoration."""
         self._cursor_positions[path] = {"line": line, "col": col}
 
-    async def end_session(self, domain: str = "unknown", errors: list[str] = None) -> None:
+    async def end_session(self, domain: str = "unknown", errors: list[str] | None = None) -> None:
         """Write a session summary on session end."""
         duration = time.time() - self._session_start
         git_status = await _get_git_status()
@@ -324,7 +324,7 @@ class MemoryAgent(BaseAgent):
             return
 
         # Generate embedding in thread pool to not block event loop
-        embedding = await asyncio.get_event_loop().run_in_executor(
+        embedding = await asyncio.get_running_loop().run_in_executor(
             None, self._embedder.encode, content[:2000]  # embed first 2KB
         )
 
@@ -457,8 +457,18 @@ class MemoryAgent(BaseAgent):
                 domain=msg.payload.get("domain", "unknown"),
                 errors=msg.payload.get("errors", []),
             )
+            # Fix M2 — iCrewZero: Return an explicit acknowledgement dict
+            # so the caller knows the session was ended successfully.
+            return {"status": "ok", "action": "session_ended"}
         if msg.type == "FORGET":
             await self.forget(msg.payload["scope"])
+            # Fix M2 — iCrewZero: Return an explicit acknowledgement dict
+            # so the caller knows the forget operation completed.
+            return {"status": "ok", "action": "forgot"}
+        # Fix M2 — iCrewZero: Added a fallback for unknown message types
+        # so the caller always gets a dict back instead of implicit None.
+        log.warning("[memory] Unknown message type: %s", msg.type)
+        return {"status": "ignored", "reason": f"unknown type: {msg.type}"}
 
     async def run(self) -> None:
         """Start the agent and its background indexer."""

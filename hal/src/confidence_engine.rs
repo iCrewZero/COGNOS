@@ -1,3 +1,6 @@
+//! Confidence engine — estimates how sure the system is about a risk score.
+
+
 use crate::{
     hal_types::{
         BehavioralMetrics,

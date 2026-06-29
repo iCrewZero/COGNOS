@@ -1,3 +1,16 @@
+//! CAPABILITY_UNIFICATION_NOTE:
+//! The Capability enum here (HAL) and the one in ipc/agent-ipc/src/capability.rs
+//! define different vocabularies. In v1 these must be unified into a single
+//! shared crate (e.g., cognos-capabilities) that both HAL and IPC depend on.
+//! For now, the IPC server maps string capability names to HAL Capability
+//! variants at the boundary.
+//!
+//! Owner: iCrewZero
+//!
+
+//! Permissions — defines what actions agents are allowed to perform.
+
+
 use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 

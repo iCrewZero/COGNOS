@@ -1,5 +1,6 @@
 //! Behavioral model — per-agent behavior tracking feeding HAL risk inputs.
 //!
+//!
 //! Produces [`BehavioralMetrics`] consumed by the confidence engine and the
 //! risk model's TrustContext / TimeAnomaly components (docs/SPEC.md).
 //! History is a bounded sliding window per agent — no unbounded growth.

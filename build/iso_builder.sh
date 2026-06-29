@@ -151,6 +151,9 @@ EOF
 
     # Copy GRUB EFI binary if available
     local grub_efi="/usr/lib/grub/x86_64-efi/monolithic/grubx64.efi"
+    # We need to know where grub.cfg ends up for the EFI embed below.
+    local grub_cfg="$ISO_ROOT/boot/grub/grub.cfg"
+
     if [[ -f "$grub_efi" ]]; then
         mcopy -i "$efi_img" "$grub_efi" ::EFI/BOOT/BOOTX64.EFI
     elif [[ -f "/usr/share/grub/x86_64-efi/grubx64.efi" ]]; then
@@ -158,6 +161,16 @@ EOF
     else
         warn "GRUB EFI binary not found — creating placeholder"
         warn "Install grub-efi-amd64-bin for UEFI boot support"
+    fi
+
+    # Embed grub.cfg into the EFI image so GRUB can find its config.
+    # Without this, GRUB boots from the ESP but can't find grub.cfg
+    # and drops to the rescue shell.
+    if [[ -f "$grub_cfg" ]]; then
+        mmd -i "$efi_img" ::boot 2>/dev/null || true
+        mmd -i "$efi_img" ::boot/grub 2>/dev/null || true
+        mcopy -i "$efi_img" "$grub_cfg" ::boot/grub/grub.cfg
+        log "  embedded grub.cfg into EFI image"
     fi
 
     log "UEFI boot configured"

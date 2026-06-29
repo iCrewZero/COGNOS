@@ -1,0 +1,49 @@
+# COGNOS/OS — IPC gRPC server systemd unit
+#
+# Purpose:
+#   Runs the gRPC IPC server that all agents connect to for inter-agent
+#   communication, memory queries, HAL gating, and event streaming.
+#
+# Owner: iCrewZero
+[Unit]
+Description=COGNOS IPC gRPC server — inter-agent communication backbone
+Documentation=https://cognos.os/docs/ipc
+# Owner: iCrewZero — added cognos-hal.service dependency (every COGNOS service needs HAL)
+After=network.target cognos-hal.service
+Wants=cognos-hal.service
+PartOf=cognos.target
+
+[Service]
+Type=exec
+User=cognos
+Group=cognos
+ExecStart=/usr/lib/cognos/cognos-ipc-server --config /etc/cognos/ipc.toml
+
+RuntimeDirectory=cognos
+StateDirectory=cognos/ipc
+WorkingDirectory=/var/lib/cognos/ipc
+
+# --- Hardening ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+
+# --- Restart policy ---
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+SyslogIdentifier=cognos-ipc
+
+[Install]
+WantedBy=cognos.target

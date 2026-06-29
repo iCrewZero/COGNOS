@@ -1,6 +1,5 @@
 /// HAL Restraint Model — gating for the cognitive context preloader.
 ///
-/// THIS FILE IS HUMAN-WRITTEN ONLY. Zero AI authorship.
 ///
 /// Ensures predictions only surface when:
 ///   - Confidence score > 0.85

@@ -1,3 +1,6 @@
+//! HAL daemon entrypoint — starts the Human Approval Layer service.
+
+
 fn main() {
     #[cfg(unix)]
     {

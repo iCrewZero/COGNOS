@@ -15,4 +15,11 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 log = "0.4"
+tracing = "0.1"
+thiserror = "2"
+tokio-util = "0.7"
 num_cpus = "1"
+
+[[bin]]
+name = "cognos-scheduler"
+path = "src/bin/scheduler_main.rs"

@@ -22,7 +22,18 @@ pub struct SearchResult {
 }
 
 /// Cosine similarity. Zero vectors score 0.0.
+/// Owner: iCrewZero — added dimension mismatch guard so silently wrong
+/// scores aren't produced when the embedder dimension changes.
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    // If dimensions don't match, something went wrong in the indexer
+    // or embedder. Return 0 rather than producing a silently wrong score.
+    if a.len() != b.len() {
+        tracing::warn!(
+            "cosine dimension mismatch: a.len()={} b.len()={} — returning 0.0",
+            a.len(), b.len(),
+        );
+        return 0.0;
+    }
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
