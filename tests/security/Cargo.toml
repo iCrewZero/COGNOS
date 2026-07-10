@@ -1,0 +1,16 @@
+[package]
+name = "cognos-security-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "COGNOS security regression tests"
+
+[dev-dependencies]
+cognos-hal = { path = "../../hal" }
+serde_json = "1.0"
+tempfile = "3"
+
+[[test]]
+name = "audit_chain"
+path = "audit_chain.rs"
+harness = true
