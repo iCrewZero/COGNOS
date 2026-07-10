@@ -9,7 +9,7 @@
 /// All weights sum to 1.0. All component scores ∈ [0.0, 1.0].
 /// Result is clamped to [0.0, 1.0] and hard floors applied last.
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 // ─── Component enums ──────────────────────────────────────────────────────────
@@ -391,7 +391,7 @@ fn describe_score_internal(
     score: f32,
     level: &RiskLevel,
     s_irrev: f32, s_scope: f32, s_trust: f32,
-    s_time: f32, s_vibe: f32, s_hist: f32, s_pat: f32,
+    s_time: f32, s_vibe: f32, s_hist: f32, _s_pat: f32,
     floor_applied: bool, floor_reason: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();

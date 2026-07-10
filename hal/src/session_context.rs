@@ -65,7 +65,7 @@ impl SessionEngine {
 
         fullscreen: bool,
     ) -> f32 {
-        let mut score = 1.0;
+        let mut score: f32 = 1.0;
 
         if idle_ms > 60_000 {
             score -= 0.35;
@@ -185,7 +185,7 @@ impl SessionEngine {
         context:
             &SessionContext,
     ) -> f32 {
-        let mut trust = 1.0;
+        let mut trust: f32 = 1.0;
 
         if !context.user_present {
             trust -= 0.50;

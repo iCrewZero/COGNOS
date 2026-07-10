@@ -153,7 +153,7 @@ impl CapabilityLattice {
         // Identity case.
         if from == to {
             return Ok(EscalationPath {
-                steps: vec![from],
+                steps: vec![from.clone()],
                 requires_approval: false,
                 summary: format!("identity escalation: {:?}", from),
             });

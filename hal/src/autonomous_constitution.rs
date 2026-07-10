@@ -7,7 +7,7 @@
 //! they cannot be amended, suspended, or overridden by any agent, including
 //! the operator, except through a full reinstall of HAL (which itself
 //! requires the recovery-kernel's [`crate::recovery_kernel::RollbackPolicy`]
-/// to be set to `Forbidden` first).
+//! to be set to `Forbidden` first).
 //!
 //! The five articles are hard-coded at construction time and all marked
 //! `immutable: true`. Any action that violates an article is blocked

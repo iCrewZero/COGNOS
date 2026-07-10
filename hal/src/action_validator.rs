@@ -4,8 +4,6 @@
 use regex::Regex;
 
 use crate::{
-    confidence_engine::ConfidenceEngine,
-
     hal_types::{
         HALContext,
         HALDecision,
@@ -13,8 +11,6 @@ use crate::{
         IntentSeverity,
         SyscallSensitivity,
     },
-
-    risk_weights::RiskEngine,
 };
 
 pub struct ActionValidator;
