@@ -1,5 +1,6 @@
 //! CLI runtime — manages gRPC connections to COGNOS services, handles
 //! reconnects and Ctrl-C cancellation, and provides a single shared client.
+#![allow(dead_code)]
 //!
 //! The [`CliRuntime`] owns:
 //! - a [`CognosClient`] (a thin wrapper around the tonic channel),
@@ -17,17 +18,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use cognos_ipc_grpc::client::{ClientConfig, CognosClient as IpcClient, ClientError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-// ─── Defaults ───────────────────────────────────────────────────────────────
-
-/// Default endpoint the CLI dials when no override is supplied.
-pub const DEFAULT_ENDPOINT: &str = "unix:///run/cognos/cli.sock";
+/// Default orchestrator ingress (full intent pipeline).
+pub const DEFAULT_ORCHESTRATOR_ENDPOINT: &str = "http://127.0.0.1:7446";
 
 /// Default per-RPC timeout applied by [`CliRuntime::with_timeout`].
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+
+impl From<ClientError> for RuntimeError {
+    fn from(e: ClientError) -> Self {
+        RuntimeError::ConnectFailed(e.to_string())
+    }
+}
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -100,75 +106,36 @@ impl SignalHandler {
     }
 }
 
-// ─── CognosClient (placeholder) ─────────────────────────────────────────────
-
-/// The CLI's gRPC client. v0: an empty placeholder. v1 will re-export (or
-/// wrap) the canonical `CognosClient` from `ipc/grpc/src/client.rs`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CognosClient {
-    /// Endpoint the client is connected to.
-    pub endpoint: String,
-    /// Whether the client believes the connection is healthy.
-    pub connected: bool,
-}
-
-impl CognosClient {
-    /// Construct a new (unconnected) client targeting `endpoint`.
-    pub fn new(endpoint: impl Into<String>) -> Self {
-        Self {
-            endpoint: endpoint.into(),
-            connected: false,
-        }
-    }
-
-    /// Mark the client as connected. v0: a stub.
-    pub async fn connect(&mut self) -> Result<(), RuntimeError> {
-        // TODO(v1): tonic::transport::Channel::connect(self.endpoint)
-        //           with exponential backoff and capability-token attach.
-        debug!(endpoint = %self.endpoint, "CognosClient.connect (v0 stub)");
-        self.connected = true;
-        Ok(())
-    }
-
-    /// Disconnect the client. v0: a stub.
-    pub fn disconnect(&mut self) {
-        self.connected = false;
-    }
-}
-
 // ─── CliRuntime ─────────────────────────────────────────────────────────────
 
 /// Owns the shared gRPC client, the deadline policy, and the signal handler.
-///
-/// Construct with [`CliRuntime::connect`]; tear down with
-/// [`CliRuntime::shutdown`].
 pub struct CliRuntime {
-    /// Shared gRPC client. v0: a placeholder; v1 will wrap a tonic Channel
-    /// and use interior mutability for concurrent RPCs.
-    pub client: CognosClient,
-    /// Per-RPC deadline policy (None = use [`DEFAULT_TIMEOUT`]).
+    pub client: IpcClient,
     pub deadline: Option<Deadline>,
-    /// Ctrl-C handler.
     pub signal_handler: SignalHandler,
 }
 
 impl CliRuntime {
-    /// Connect to the COGNOS endpoint and return a ready runtime.
+    /// Connect to the orchestrator ingress and return a ready runtime.
     pub async fn connect(endpoint: String) -> Result<Self, RuntimeError> {
-        info!(%endpoint, "connecting CLI runtime");
+        info!(%endpoint, "connecting CLI runtime to orchestrator");
 
-        let mut client = CognosClient::new(endpoint);
-        // TODO(v1): real dial with backoff; v0 always succeeds.
-        client.connect().await.map_err(|e| {
+        let mut client = IpcClient::new(ClientConfig {
+            agent_id: "agent.cli".to_string(),
+            signing_secret: std::env::var("COGNOS_IPC_SECRET").unwrap_or_default(),
+            endpoint: endpoint.clone(),
+            request_timeout_ms: DEFAULT_TIMEOUT.as_millis() as u64,
+            ..ClientConfig::default()
+        });
+        client.connect(&endpoint).await.map_err(|e| {
             warn!(error = %e, "connect failed");
-            RuntimeError::ConnectFailed(client.endpoint.clone())
+            RuntimeError::ConnectFailed(format!("{e}"))
         })?;
 
-        let signal_handler = SignalHandler::install();
         Ok(Self {
             client,
             deadline: None,
-            signal_handler,
+            signal_handler: SignalHandler::install(),
         })
     }
 

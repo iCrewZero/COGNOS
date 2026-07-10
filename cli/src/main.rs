@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+mod approval_watch;
 mod commands;
 mod runtime;
 mod tui;

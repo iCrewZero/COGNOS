@@ -1,6 +1,7 @@
 //! TUI — interactive terminal UI built on ratatui. Shows agent statuses,
 //! recent HAL decisions, memory activity, and system metrics in real time.
 //! Keyboard-driven.
+#![allow(dead_code)]
 //!
 //! The TUI subscribes to the COGNOS event bus (via an
 //! [`EventBusReceiver`]) and renders four tabs:
@@ -342,7 +343,7 @@ impl Tui {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
-                .split(f.size());
+                .split(f.area());
 
             // Tab bar.
             let titles: Vec<Line> = Tab::ALL
@@ -356,8 +357,8 @@ impl Tui {
                 .highlight_style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan));
             f.render_widget(tabs, chunks[0]);
 
-            // Body — chosen by selected tab.
-            let body = match self.state.selected_tab {
+            // Body — chosen by selected tab (render per arm: List vs Paragraph).
+            match self.state.selected_tab {
                 Tab::Agents => {
                     let items: Vec<ListItem> = self
                         .state
@@ -372,8 +373,9 @@ impl Tui {
                             ))
                         })
                         .collect();
-                    List::new(items)
-                        .block(Block::default().borders(Borders::ALL).title("Agents"))
+                    let list = List::new(items)
+                        .block(Block::default().borders(Borders::ALL).title("Agents"));
+                    f.render_widget(list, chunks[1]);
                 }
                 Tab::Decisions => {
                     let items: Vec<ListItem> = self
@@ -387,17 +389,19 @@ impl Tui {
                             ))
                         })
                         .collect();
-                    List::new(items)
-                        .block(Block::default().borders(Borders::ALL).title("Decisions"))
+                    let list = List::new(items)
+                        .block(Block::default().borders(Borders::ALL).title("Decisions"));
+                    f.render_widget(list, chunks[1]);
                 }
                 Tab::Memory => {
                     // TODO(v1): dedicated memory feed list.
-                    Paragraph::new("(v0 stub — memory activity list not yet wired)")
-                        .block(Block::default().borders(Borders::ALL).title("Memory"))
+                    let para = Paragraph::new("(v0 stub — memory activity list not yet wired)")
+                        .block(Block::default().borders(Borders::ALL).title("Memory"));
+                    f.render_widget(para, chunks[1]);
                 }
                 Tab::Metrics => {
                     let m = &self.state.metrics;
-                    Paragraph::new(format!(
+                    let para = Paragraph::new(format!(
                         "scenario:  {}\ncpu cores: {}\ngpu:       {:.2}\nram:       {:.2} GB\nbattery:   {}% {}\n",
                         m.scenario,
                         m.cpu_usage_per_core.len(),
@@ -406,10 +410,10 @@ impl Tui {
                         m.battery_percent,
                         if m.battery_discharging { "(discharging)" } else { "(on ac)" },
                     ))
-                    .block(Block::default().borders(Borders::ALL).title("Metrics"))
+                    .block(Block::default().borders(Borders::ALL).title("Metrics"));
+                    f.render_widget(para, chunks[1]);
                 }
-            };
-            f.render_widget(body, chunks[1]);
+            }
 
             // Footer / help line.
             let help = Paragraph::new("q quit · 1-4 tabs · ↑↓ navigate · Enter detail · r refresh");
