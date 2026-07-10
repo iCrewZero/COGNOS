@@ -1,0 +1,28 @@
+# Tight enum variant of intent.gbnf for GBNF throughput experiments.
+# Finite fields use literal alternations only (no open char-class strings).
+
+root ::= root-clear | root-disamb
+
+root-clear ::= "{" space "\"goal\":" space goal-string space "," space "\"domain\":" space domain-value space "," space "\"confidence\":" space unit space "," space "\"ambiguity_score\":" space unit space "," space "\"risk_estimate\":" space unit space "," space "\"required_context\":" space string-array space "," space "\"candidate_actions\":" space candidate-array space "," space "\"disambiguation_required\":" space "false" space "," space "\"disambiguation_question\":" space "null" space "," space "\"hal_pre_score\":" space unit space "," space "\"escalate_to_cloud\":" space boolean space "}"
+
+root-disamb ::= "{" space "\"goal\":" space goal-string space "," space "\"domain\":" space domain-value space "," space "\"confidence\":" space unit space "," space "\"ambiguity_score\":" space unit space "," space "\"risk_estimate\":" space unit space "," space "\"required_context\":" space string-array space "," space "\"candidate_actions\":" space candidate-array-nonempty space "," space "\"disambiguation_required\":" space "true" space "," space "\"disambiguation_question\":" space question-literal space "," space "\"hal_pre_score\":" space unit space "," space "\"escalate_to_cloud\":" space boolean space "}"
+
+candidate-array ::= "[" space ( candidate ( space "," space candidate )? )? space "]"
+candidate-array-nonempty ::= "[" space candidate ( space "," space candidate )+ space "]"
+candidate ::= "{" space "\"action\":" space action-string space "," space "\"target\":" space path-literal space "," space "\"confidence\":" space unit space "," space "\"recency_score\":" space unit space "}"
+
+string-array ::= "[" space ( context-key ( space "," space context-key )* )? space "]"
+
+goal-string ::= "\"create_dir\"" | "\"open_workspace\"" | "\"open_file\"" | "\"delete_path\"" | "\"pkg.install\"" | "\"out_of_scope\"" | "\"install_package\""
+action-string ::= "\"create_dir\"" | "\"create_file\"" | "\"open_files\"" | "\"install_package\"" | "\"delete_path\""
+domain-value ::= "null" | "\"system\"" | "\"robotics\"" | "\"finance\""
+boolean ::= "true" | "false"
+
+unit ::= "0.00" | "0.05" | "0.10" | "0.15" | "0.20" | "0.25" | "0.30" | "0.35" | "0.40" | "0.45" | "0.50" | "0.55" | "0.60" | "0.65" | "0.70" | "0.75" | "0.80" | "0.85" | "0.90" | "0.95" | "1.00"
+
+context-key ::= "\"recent_project\"" | "\"pkg_manager\"" | "\"network\"" | "\"contact\"" | "\"cloud_reasoning\"" | "\"repo_state\"" | "\"user_clarification\""
+
+path-literal ::= "\"/tmp\"" | "\"/tmp/test\"" | "\"/boot\"" | "\"/etc\"" | "\"~/projects/robo/motor.py\"" | "\"~/finance/budget.xlsx\"" | "\"ffmpeg\""
+question-literal ::= "\"Motor driver or PID tuning?\"" | "\"Which project?\"" | "\"Which file?\""
+
+space ::= " "

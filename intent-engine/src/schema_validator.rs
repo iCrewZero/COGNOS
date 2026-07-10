@@ -7,9 +7,13 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Provenance stamp for keyword-classifier output. Must match
+/// [`crate::backends::fallback::KEYWORD_FALLBACK_SOURCE`].
+const KEYWORD_FALLBACK_SOURCE: &str = "keyword_fallback";
+
 // ─── Schema types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CandidateAction {
     pub action: String,
     pub target: String,
@@ -17,7 +21,7 @@ pub struct CandidateAction {
     pub recency_score: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionContext {
     pub last_active_domain: Option<String>,
     pub last_active_files: Vec<String>,
@@ -25,7 +29,7 @@ pub struct SessionContext {
     pub time_since_last_session: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IntentSchema {
     pub intent_id: Uuid,
     pub raw_input: String,
@@ -44,6 +48,12 @@ pub struct IntentSchema {
     pub session_context: SessionContext,
     pub hal_pre_score: f32,
     pub escalate_to_cloud: bool,
+    /// Provenance of this intent. Absent/`None` on the normal LLM path;
+    /// `Some("keyword_fallback")` when produced by the degraded keyword
+    /// classifier. System-set metadata — NOT part of the LLM output contract,
+    /// so it is intentionally absent from the GBNF grammar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 // ─── Parse errors ─────────────────────────────────────────────────────────────
@@ -81,9 +91,92 @@ pub enum ValidationError {
     CloudEscalationInconsistent,
 }
 
+/// Caller-known values stamped after inference (never LLM-emitted).
+pub struct InjectedIntentFields<'a> {
+    pub user_input: &'a str,
+    pub session: &'a SessionContext,
+}
+
+/// Top-level schema fields the GBNF grammar constrains the model to emit.
+pub const LLM_EMITTED_TOP_LEVEL: &[&str] = &[
+    "goal",
+    "domain",
+    "confidence",
+    "ambiguity_score",
+    "risk_estimate",
+    "required_context",
+    "candidate_actions",
+    "disambiguation_required",
+    "disambiguation_question",
+    "hal_pre_score",
+    "escalate_to_cloud",
+];
+
+/// Nested fields inside `candidate_actions` objects (LLM-emitted).
+pub const LLM_EMITTED_CANDIDATE_FIELDS: &[&str] =
+    &["action", "target", "confidence", "recency_score"];
+
+/// Fields always set by the parser/runtime — must not appear in the GBNF grammar.
+pub const INJECTED_FIELDS: &[&str] = &[
+    "raw_input",
+    "intent_id",
+    "session_context",
+    "source",
+];
+
 /// Parse raw LLM JSON output into a typed IntentSchema.
 /// Rejects malformed output with a descriptive error.
+///
+/// When no injection context is given, `raw_input`, `intent_id`, and
+/// `session_context` are read from the JSON blob (golden fixtures / legacy tests).
 pub fn parse_llm_output(raw: &str) -> Result<IntentSchema, ParseError> {
+    parse_llm_output_with_injection(raw, None)
+}
+
+/// Inject only `raw_input`; `intent_id` and `session_context` fall back to JSON.
+pub fn parse_llm_output_with_input(
+    raw: &str,
+    user_input: Option<&str>,
+) -> Result<IntentSchema, ParseError> {
+    match user_input {
+        Some(text) => {
+            let default_session = SessionContext {
+                last_active_domain: None,
+                last_active_files: vec![],
+                current_time: "00:00".into(),
+                time_since_last_session: None,
+            };
+            parse_llm_output_with_injection(
+                raw,
+                Some(InjectedIntentFields {
+                    user_input: text,
+                    session: &default_session,
+                }),
+            )
+        }
+        None => parse_llm_output_with_injection(raw, None),
+    }
+}
+
+/// Production path: stamp `raw_input`, `intent_id`, and `session_context` from the caller.
+pub fn parse_llm_output_with_context(
+    raw: &str,
+    user_input: &str,
+    session: &SessionContext,
+) -> Result<IntentSchema, ParseError> {
+    parse_llm_output_with_injection(
+        raw,
+        Some(InjectedIntentFields {
+            user_input,
+            session,
+        }),
+    )
+}
+
+fn parse_llm_output_with_injection(
+    raw: &str,
+    injected: Option<InjectedIntentFields<'_>>,
+) -> Result<IntentSchema, ParseError> {
     let v: serde_json::Value = serde_json::from_str(raw)
         .map_err(|e| {
             let snippet = raw.chars().take(200).collect::<String>();
@@ -128,35 +221,61 @@ pub fn parse_llm_output(raw: &str) -> Result<IntentSchema, ParseError> {
         return Err(ParseError::DisambiguationMissingQuestion);
     }
 
-    // escalate_to_cloud: auto-derive if not explicit
+    // escalate_to_cloud: auto-derive if not explicit. The confidence<0.75 rule
+    // applies to the LLM path only; keyword fallback (offline registry) must
+    // never escalate — cloud egress is blocked when the machine is offline.
     let explicit_escalate = v["escalate_to_cloud"].as_bool();
+    let source = v["source"].as_str().map(str::to_string);
     let required_context: Vec<String> = v["required_context"]
         .as_array()
         .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
 
-    let escalate_to_cloud = explicit_escalate.unwrap_or(
-        confidence < 0.75 || required_context.contains(&"cloud_reasoning".to_string())
-    );
+    let escalate_to_cloud = match explicit_escalate {
+        Some(flag) => flag,
+        None if source.as_deref() == Some(KEYWORD_FALLBACK_SOURCE) => false,
+        None => {
+            confidence < 0.75
+                || required_context
+                    .iter()
+                    .any(|c| c == "cloud_reasoning")
+        }
+    };
 
-    let session_ctx = &v["session_context"];
-    let session_context = SessionContext {
-        last_active_domain: session_ctx["last_active_domain"].as_str().map(str::to_string),
-        last_active_files: session_ctx["last_active_files"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
-            .unwrap_or_default(),
-        current_time: session_ctx["current_time"].as_str()
-            .unwrap_or("00:00").to_string(),
-        time_since_last_session: session_ctx["time_since_last_session"]
-            .as_str().map(str::to_string),
+    let session_context = if let Some(c) = &injected {
+        c.session.clone()
+    } else {
+        let session_ctx = &v["session_context"];
+        SessionContext {
+            last_active_domain: session_ctx["last_active_domain"].as_str().map(str::to_string),
+            last_active_files: session_ctx["last_active_files"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            current_time: session_ctx["current_time"].as_str()
+                .unwrap_or("00:00").to_string(),
+            time_since_last_session: session_ctx["time_since_last_session"]
+                .as_str().map(str::to_string),
+        }
+    };
+
+    let intent_id = if injected.is_some() {
+        Uuid::new_v4()
+    } else {
+        v["intent_id"].as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or_else(Uuid::new_v4)
+    };
+
+    let raw_input = if let Some(c) = &injected {
+        c.user_input.to_string()
+    } else {
+        v["raw_input"].as_str().unwrap_or("").to_string()
     };
 
     let schema = IntentSchema {
-        intent_id: v["intent_id"].as_str()
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .unwrap_or_else(Uuid::new_v4),
-        raw_input: v["raw_input"].as_str().unwrap_or("").to_string(),
+        intent_id,
+        raw_input,
         goal,
         domain: v["domain"].as_str().map(str::to_string),
         confidence,
@@ -169,6 +288,7 @@ pub fn parse_llm_output(raw: &str) -> Result<IntentSchema, ParseError> {
         session_context,
         hal_pre_score,
         escalate_to_cloud,
+        source,
     };
 
     validate(&schema).map_err(|errs| {
@@ -357,8 +477,7 @@ mod tests {
             "session_context": {{
                 "last_active_files": [],
                 "current_time": "10:00"
-            }},
-            "escalate_to_cloud": false
+            }}
         }}"#, goal, confidence)
     }
 
@@ -366,6 +485,43 @@ mod tests {
     fn valid_json_parses() {
         let result = parse_llm_output(&minimal_json("open_workspace", 0.85));
         assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn context_injects_session_and_intent_id() {
+        let llm_only = r#"{
+            "goal": "create_dir",
+            "domain": "system",
+            "confidence": 0.9,
+            "ambiguity_score": 0.1,
+            "risk_estimate": 0.0,
+            "required_context": [],
+            "candidate_actions": [],
+            "disambiguation_required": false,
+            "disambiguation_question": null,
+            "hal_pre_score": 0.0,
+            "escalate_to_cloud": false
+        }"#;
+        let session = SessionContext {
+            last_active_domain: Some("system".into()),
+            last_active_files: vec!["/tmp".into()],
+            current_time: "12:00".into(),
+            time_since_last_session: Some("30m".into()),
+        };
+        let schema = parse_llm_output_with_context(llm_only, "mkdir /tmp/test", &session).unwrap();
+        assert_eq!(schema.raw_input, "mkdir /tmp/test");
+        assert_eq!(schema.session_context, session);
+        assert_ne!(schema.intent_id, Uuid::nil());
+    }
+
+    #[test]
+    fn user_input_stamped_as_raw_input() {
+        let mut v: serde_json::Value = serde_json::from_str(&minimal_json("create_dir", 0.9)).unwrap();
+        v.as_object_mut().unwrap().remove("raw_input");
+        let json = v.to_string();
+        let schema = parse_llm_output_with_input(&json, Some("crée un dossier test dans /tmp"))
+            .expect("parses without LLM raw_input");
+        assert_eq!(schema.raw_input, "crée un dossier test dans /tmp");
     }
 
     #[test]
@@ -405,6 +561,29 @@ mod tests {
     fn low_confidence_triggers_cloud_escalation() {
         let result = parse_llm_output(&minimal_json("open_workspace", 0.60)).unwrap();
         assert!(result.escalate_to_cloud);
+    }
+
+    #[test]
+    fn keyword_fallback_source_never_auto_escalates() {
+        // Low confidence but keyword provenance — offline path must not escalate
+        // even when escalate_to_cloud is omitted from the JSON blob.
+        let json = r#"{
+            "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+            "raw_input": "delete temp",
+            "goal": "file.delete",
+            "confidence": 0.25,
+            "ambiguity_score": 0.3,
+            "risk_estimate": 0.6,
+            "hal_pre_score": 0.6,
+            "required_context": [],
+            "candidate_actions": [],
+            "disambiguation_required": false,
+            "session_context": {"last_active_files": [], "current_time": "10:00"},
+            "source": "keyword_fallback"
+        }"#;
+        let result = parse_llm_output(json).unwrap();
+        assert!(!result.escalate_to_cloud);
+        assert_eq!(result.source.as_deref(), Some("keyword_fallback"));
     }
 
     #[test]

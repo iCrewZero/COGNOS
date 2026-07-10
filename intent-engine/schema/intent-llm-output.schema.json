@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cognos.os/schema/intent-llm-output/v2.0.0",
+  "title": "IntentLlmOutput",
+  "description": "LLM-emitted fields only. Injected after inference: raw_input, intent_id, session_context, source. Goal taxonomy: docs/GOAL_TAXONOMY.md",
+  "x-cognos-schema-version": "2.0.0",
+  "x-cognos-rust-type": "LlmEmittedIntent",
+  "x-cognos-emitted-by": "llm",
+  "x-cognos-injected-fields": [
+    "raw_input",
+    "intent_id",
+    "session_context",
+    "source"
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "goal",
+    "domain",
+    "confidence",
+    "ambiguity_score",
+    "risk_estimate",
+    "required_context",
+    "candidate_actions",
+    "disambiguation_required",
+    "disambiguation_question",
+    "hal_pre_score",
+    "escalate_to_cloud"
+  ],
+  "properties": {
+    "goal": {
+      "description": "Canonical goal (docs/GOAL_TAXONOMY.md). Aligned with intent.gbnf goal-string.",
+      "type": "string",
+      "enum": [
+        "await_input",
+        "code_task",
+        "create_dir",
+        "delete_path",
+        "install_package",
+        "network_download",
+        "network_send",
+        "open_file",
+        "open_workspace",
+        "out_of_scope",
+        "package_and_convert",
+        "pkg.install",
+        "search_files"
+      ]
+    },
+    "domain": {
+      "description": "Optional domain tag; null when unknown.",
+      "type": ["string", "null"],
+      "enum": [
+        "system",
+        "robotics",
+        "robotique",
+        "finance",
+        "media",
+        "coding",
+        "work",
+        "downloads",
+        null
+      ]
+    },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "ambiguity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "risk_estimate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "required_context": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z_]{1,24}$" }
+    },
+    "candidate_actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate_action" }
+    },
+    "disambiguation_required": { "type": "boolean" },
+    "disambiguation_question": { "type": ["string", "null"] },
+    "hal_pre_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "escalate_to_cloud": { "type": "boolean" }
+  },
+  "$defs": {
+    "candidate_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "target", "confidence", "recency_score"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create_dir",
+            "create_file",
+            "open_file",
+            "open_files",
+            "install_package",
+            "convert_media",
+            "refactor_code",
+            "run_tests",
+            "search_files",
+            "download_file",
+            "send_email",
+            "delete_path",
+            "delete_files"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[~./a-zA-Z0-9_:/=?&-]{1,80}$"
+        },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "recency_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    }
+  }
+}
