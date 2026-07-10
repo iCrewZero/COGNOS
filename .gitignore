@@ -32,13 +32,31 @@ cmake-build-*/
 # ONNX model binaries
 *.onnx
 
+# ML / LLM weight binaries (never commit — WSL models live outside repo)
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
 # Kernel & system build outputs
 /build/cache/
+/build/artifacts/
 /build/output/
+/build/rootfs/
 /build/rootfs_work/
 /build/iso_work/
 /kernel/**/*.o
 *.deb
+*.iso
+
+# Heavy ephemeral benchmark / POC fixtures (WSL /tmp copies, local dumps)
+tmp/
+**/vllm-golden-*.json
+**/vllm-golden-*.log
+**/vllm-xgrammar-*.json
+**/vllm-xgrammar-*.log
 
 # Secrets & local config
 .env
