@@ -54,7 +54,8 @@ Aucun fichier `.pem` tracké.
 
 - [x] `.gitignore` mis à jour
 - [x] État gros fichiers / secrets consigné
-- [x] Commit `.gitignore` (message ci-dessous)
+- [x] Commit : `575aad7` — `chore: ignore ML weights, build artifacts, and heavy POC fixtures`
+  (fichiers : `.gitignore`, `docs/SESSION_LOG.md`)
 
 ### Échecs / blocages
 
