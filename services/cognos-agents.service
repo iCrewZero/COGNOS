@@ -7,10 +7,11 @@
 [Unit]
 Description=COGNOS Python Agent Pool — coordinator, planner, memory, security, scheduler
 Documentation=https://cognos.os/docs/agents
-# Owner: iCrewZero — added cognos-hal.service dependency (every COGNOS service needs HAL)
-After=network.target cognos-ipc.service cognos-hal.service
-Wants=cognos-ipc.service cognos-hal.service
+After=network.target cognos-ipc.service cognos-hal.service cognos-intent.service
+Wants=cognos-ipc.service cognos-hal.service cognos-intent.service
 PartOf=cognos.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -44,8 +45,6 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-agents
 

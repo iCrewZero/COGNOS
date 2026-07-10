@@ -178,8 +178,16 @@ impl ProcfsReader {
 
 // ─── Foreground app detection helpers ─────────────────────────────────────────
 
+/// Non-Unix fallback: sway/Wayland IPC uses a Unix domain socket, which does
+/// not exist on non-Unix hosts. Detection is unavailable there.
+#[cfg(not(unix))]
+fn foreground_via_sway() -> Option<String> {
+    None
+}
+
 /// Try to get the focused window's app name from sway via sway-ipc.
 /// sway-ipc is the fastest path: a single UNIX socket message, no D-Bus.
+#[cfg(unix)]
 fn foreground_via_sway() -> Option<String> {
     use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
@@ -190,7 +198,7 @@ fn foreground_via_sway() -> Option<String> {
     let mut stream = UnixStream::connect(&socket_path).ok()?;
 
     // IPC magic header + message type 7 (GET_TREE) + payload length 0.
-    let header: [u8; 14] = [
+    let header: [u8; 13] = [
         b's', b'w', b'a', b'y', b'i', b'p', b'c', // magic
         0, 0, 0, 0, // payload length (little-endian u32)
         0, 0, // message type 7 = GET_TREE
@@ -216,6 +224,7 @@ fn foreground_via_sway() -> Option<String> {
 
 /// Recursively walk the sway IPC tree JSON to find the focused node's
 /// app_id (which is the Wayland app-id / .desktop file name).
+#[cfg(unix)]
 fn find_focused_in_sway_tree(node: &serde_json::Value) -> Option<String> {
     // Check if this node is focused.
     if node.get("focused").and_then(|f| f.as_bool()).unwrap_or(false) {

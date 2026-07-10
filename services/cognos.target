@@ -1,3 +1,19 @@
+# COGNOS/OS — aggregate runtime target
+#
+# Boot graph:
+#   ipc → hal → llm → scheduler → memory → orchestrator → intent → agents → ui-agent
+#
+# Criticality:
+#   - `cognos-ipc.service` and `cognos-hal.service` are required.
+#   - `cognos-llm.service` is only wanted so the system still boots in degraded
+#     fallback mode when the model is absent.
+
+[Unit]
+Description=COGNOS runtime target
+Requires=cognos-ipc.service cognos-hal.service
+Wants=cognos-llm.service cognos-scheduler.service cognos-memory.service cognos-orchestrator.service cognos-intent.service cognos-agents.service cognos-ui-agent.service
+After=cognos-ipc.service cognos-hal.service cognos-llm.service cognos-scheduler.service cognos-memory.service cognos-orchestrator.service cognos-intent.service cognos-agents.service cognos-ui-agent.service
+AllowIsolate=yes
 # COGNOS OS — AI Services Target
 # All COGNOS service units declare PartOf=cognos.target and WantedBy=cognos.target.
 # This target is started after the network is up.

@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 // We re-use it here so the runtime control loop can reference
 // scenario types without pulling in the full daemon dependency.
 use crate::daemon::Scenario;
-use crate::predictor::{Predictor, PredictorError, TelemetrySample};
+use crate::predictor::{Predictor, PredictorError};
 
 // ─── Resource Policy (local definition so runtime.rs compiles standalone) ─────
 //

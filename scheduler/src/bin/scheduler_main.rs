@@ -9,6 +9,8 @@
 
 use tracing_subscriber::EnvFilter;
 
+use cognos_ipc_grpc::agent::{self, AgentSpec};
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -18,11 +20,22 @@ async fn main() {
 
     tracing::info!("cognos-scheduler starting");
 
-    // In v1, we would create a SchedulerDaemon, connect to IPC,
-    // and start the telemetry + control loop. For now we just
-    // log readiness and wait for ctrl-c.
-    tracing::info!("cognos-scheduler ready (v0: no eBPF telemetry yet)");
+    // Register with the central IPC server as an agent and keep a heartbeat
+    // alive on a background task (address/secret from the service environment).
+    let ipc = agent::spawn(AgentSpec::from_env(
+        "agent.scheduler",
+        vec![
+            "resource.telemetry".to_string(),
+            "resource.policy".to_string(),
+            "sched.hint".to_string(),
+        ],
+    ))
+    .await;
+
+    tracing::info!("cognos-scheduler ready");
 
     tokio::signal::ctrl_c().await.ok();
+
+    ipc.stop().await;
     tracing::info!("cognos-scheduler stopped");
 }

@@ -8,10 +8,10 @@
 [Unit]
 Description=COGNOS IPC gRPC server — inter-agent communication backbone
 Documentation=https://cognos.os/docs/ipc
-# Owner: iCrewZero — added cognos-hal.service dependency (every COGNOS service needs HAL)
-After=network.target cognos-hal.service
-Wants=cognos-hal.service
+After=network.target
 PartOf=cognos.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=exec
@@ -40,8 +40,6 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-ipc
 

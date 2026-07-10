@@ -15,8 +15,11 @@
 [Unit]
 Description=COGNOS memory service — semantic memory + secure fabric
 Documentation=https://cognos.os/docs/memory
-After=network.target cognos-hal.service
+After=network.target cognos-hal.service cognos-scheduler.service
+Wants=cognos-scheduler.service
 PartOf=cognos.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=exec
@@ -49,8 +52,6 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-memory
 
