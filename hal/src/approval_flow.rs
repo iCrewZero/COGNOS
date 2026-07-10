@@ -148,10 +148,18 @@ pub struct HalDaemon {
 impl HalDaemon {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let socket_path = std::env::var("COGNOS_HAL_SOCKET")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| "/run/cognos/hal.sock".into());
+        let hal_ui_socket = std::env::var("COGNOS_HAL_UI_SOCKET")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| "/run/cognos/hal-ui.sock".into());
         Self {
-            socket_path: "/run/cognos/hal.sock".into(),
-            notification_socket: "/run/cognos/notifications.sock".into(),
-            hal_ui_socket: "/run/cognos/hal-ui.sock".into(),
+            socket_path,
+            notification_socket: std::env::var("COGNOS_HAL_NOTIFICATIONS_SOCKET")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| "/run/cognos/notifications.sock".into()),
+            hal_ui_socket,
             audit_log: std::path::PathBuf::from(home).join(".cognos/audit.log"),
             running: Arc::new(AtomicBool::new(true)),
         }
