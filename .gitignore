@@ -10,6 +10,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+**/cognos-vllm-venv/
 *.egg-info/
 
 # C/C++ build artifacts
@@ -47,6 +48,7 @@ cmake-build-*/
 /build/rootfs/
 /build/rootfs_work/
 /build/iso_work/
+/build/e2e_logs/
 /kernel/**/*.o
 *.deb
 *.iso
