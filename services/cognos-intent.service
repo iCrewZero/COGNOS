@@ -5,6 +5,8 @@
 #   into a validated action graph consumed by the orchestrator and HAL.
 #
 # Dependencies:
+#   - cognos-ipc.service (the IPC bus must be up before the engine registers
+#                         and serves DispatchIntent)
 #   - cognos-hal.service (HAL must be up before intent issues any gate requests)
 #   - network.target      (model weights may be fetched on first boot)
 #
@@ -13,9 +15,16 @@
 [Unit]
 Description=COGNOS intent engine
 Documentation=https://cognos.os/docs/intent
-After=network.target cognos-hal.service
-Wants=cognos-hal.service
+After=network.target cognos-ipc.service cognos-hal.service cognos-orchestrator.service cognos-vllm.service
+# Soft dependencies: the engine registers on the IPC bus and calls HAL, but its
+# client connections are non-fatal (it degrades rather than refusing to start),
+# so these are Wants (ordering via After) rather than a hard Requires.
+Wants=cognos-ipc.service cognos-hal.service cognos-orchestrator.service cognos-vllm.service
 PartOf=cognos.target
+
+# Rate-limit restarts (these belong in [Unit] for modern systemd).
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=exec
@@ -45,14 +54,10 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-intent
 
 [Install]
 WantedBy=cognos.target
 
-# v0: stub — exec path does not exist yet, unit is wired for install only
-# TODO(v1): replace ExecStart with real binary once intent-engine crate ships a binary target
 # TODO(v1): add ExecReload=/bin/kill -HUP $MAINPID once config hot-reload lands
