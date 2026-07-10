@@ -8,5 +8,7 @@ members = [
     "ipc/grpc",
     "orchestrator",
     "cli",
+    "tests/e2e",
+    "tests/security",
 ]
 resolver = "2"

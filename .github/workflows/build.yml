@@ -22,10 +22,19 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Install protoc
+      - name: Install system build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq protobuf-compiler
+          sudo apt-get install -y -qq \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libfuse3-dev \
+            protobuf-compiler \
+            python3 \
+            python3-venv \
+            python3-pip \
+            make
 
       - name: Cache Cargo
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -40,12 +49,18 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
+      - name: Generate Python gRPC stubs
+        run: make -C build proto
+
+      - name: Check workspace (all targets, incl. FUSE + unix cfgs)
+        run: cargo check --workspace --all-targets
+
       - name: Build workspace
         run: |
           if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            cargo build --workspace --release
+            cargo build --workspace --release --bins
           else
-            cargo build --workspace
+            cargo build --workspace --bins
           fi
 
       - name: Run all Rust tests
@@ -90,12 +105,7 @@ jobs:
         run: ruff check agents/
 
       - name: Run Python tests
-        run: |
-          if [ -d agents/tests ]; then
-            python -m pytest agents/tests/ -v
-          else
-            echo "No agent tests directory yet — skipping"
-          fi
+        run: python -m pytest agents/ -v
 
       - name: Run threat model tests
         run: python -m pytest .github/workflows/threat_model_test.py -v --tb=short
@@ -119,6 +129,67 @@ jobs:
                  --descriptor_set_out=/dev/null \
                  agents/shared/ipc/proto/cognos.proto
           echo "Proto compilation OK"
+
+  e2e-intent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Install system build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libfuse3-dev \
+            protobuf-compiler \
+            python3 \
+            python3-venv \
+            python3-pip \
+            make
+
+      - name: Cache Cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache Python venv
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .venv
+          key: venv-e2e-${{ runner.os }}-py3.12-${{ hashFiles('agents/requirements.txt') }}
+          restore-keys: |
+            venv-e2e-${{ runner.os }}-py3.12-
+
+      - name: Set up Python venv for file_task
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -q -r agents/requirements.txt
+
+      - name: Generate Python gRPC stubs
+        run: make -C build proto
+
+      - name: Build workspace binaries
+        run: cargo build --workspace --bins
+
+      - name: Run intent pipeline E2E tests
+        env:
+          COGNOS_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: cargo test -p cognos-e2e-tests -- --include-ignored --nocapture
 
   build-kernel:
     runs-on: ubuntu-24.04
@@ -161,7 +232,7 @@ jobs:
   ci-gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
-    needs: [build-rust, build-python, proto-lint]
+    needs: [build-rust, build-python, proto-lint, e2e-intent]
     if: always()
     steps:
       - name: Evaluate required job results
@@ -169,6 +240,7 @@ jobs:
           echo "build-rust: ${{ needs.build-rust.result }}"
           echo "build-python: ${{ needs.build-python.result }}"
           echo "proto-lint: ${{ needs.proto-lint.result }}"
+          echo "e2e-intent: ${{ needs.e2e-intent.result }}"
 
           if [ "${{ needs.build-rust.result }}" != "success" ]; then
             echo "::error::build-rust failed or was cancelled"
@@ -180,6 +252,10 @@ jobs:
           fi
           if [ "${{ needs.proto-lint.result }}" != "success" ]; then
             echo "::error::proto-lint failed or was cancelled"
+            exit 1
+          fi
+          if [ "${{ needs.e2e-intent.result }}" != "success" ]; then
+            echo "::error::e2e-intent failed or was cancelled"
             exit 1
           fi
 
