@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tonic::transport::{Channel, Endpoint, Uri};
@@ -142,8 +141,12 @@ impl CognosClient {
         &self,
         mut intent: Intent,
     ) -> Result<IntentResponse, ClientError> {
-        let client = self.require_connected()?;
-        intent.trace_id = uuid::Uuid::new_v4().to_string();
+        let mut client = self.require_connected()?;
+        intent.trace_id = if intent.trace_id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            intent.trace_id.clone()
+        };
         let resp = client
             .dispatch_intent(tonic::Request::new(intent))
             .await
@@ -156,7 +159,7 @@ impl CognosClient {
         &self,
         mut query: MemoryQuery,
     ) -> Result<MemoryResult, ClientError> {
-        let client = self.require_connected()?;
+        let mut client = self.require_connected()?;
         query.trace_id = uuid::Uuid::new_v4().to_string();
         let resp = client
             .query_memory(tonic::Request::new(query))
@@ -170,8 +173,12 @@ impl CognosClient {
         &self,
         mut req: HalGateRequest,
     ) -> Result<HalGateResponse, ClientError> {
-        let client = self.require_connected()?;
-        req.trace_id = uuid::Uuid::new_v4().to_string();
+        let mut client = self.require_connected()?;
+        req.trace_id = if req.trace_id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            req.trace_id.clone()
+        };
         let resp = client
             .hal_gate(tonic::Request::new(req))
             .await
@@ -184,10 +191,23 @@ impl CognosClient {
         &self,
         mut hb: Heartbeat,
     ) -> Result<Heartbeat, ClientError> {
-        let client = self.require_connected()?;
+        let mut client = self.require_connected()?;
         hb.sent_at_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
         let resp = client
             .heartbeat(tonic::Request::new(hb))
+            .await
+            .map_err(|e| ClientError::Status(e.to_string()))?;
+        Ok(resp.into_inner())
+    }
+
+    /// GetPipelineMetrics — fetch pipeline counters from a serving daemon.
+    pub async fn get_pipeline_metrics(
+        &self,
+        request: PipelineMetricsRequest,
+    ) -> Result<PipelineMetrics, ClientError> {
+        let mut client = self.require_connected()?;
+        let resp = client
+            .get_pipeline_metrics(tonic::Request::new(request))
             .await
             .map_err(|e| ClientError::Status(e.to_string()))?;
         Ok(resp.into_inner())
@@ -223,7 +243,8 @@ impl CognosClient {
                         Ok(_) => debug!(seq, "heartbeat ok"),
                         Err(e) => {
                             warn!(seq, error = %e, "heartbeat failed, reconnecting");
-                            if let Err(e) = self.connect(&self.config.endpoint).await {
+                            let endpoint = self.config.endpoint.clone();
+                            if let Err(e) = self.connect(&endpoint).await {
                                 error!(seq, error = %e, "reconnect failed in heartbeat loop");
                                 return Err(e);
                             }
@@ -283,9 +304,13 @@ impl CognosClient {
         )
     }
 
-    fn require_connected(&self) -> Result<&CognosIpcClient<Channel>, ClientError> {
+    fn require_connected(&self) -> Result<CognosIpcClient<Channel>, ClientError> {
+        // tonic's generated client methods take `&mut self`. The client is
+        // cheap to clone (it shares the underlying HTTP/2 Channel), so we hand
+        // back an owned clone the caller can drive mutably.
         self.inner
             .as_ref()
+            .cloned()
             .ok_or_else(|| ClientError::Transport("not connected".into()))
     }
 }

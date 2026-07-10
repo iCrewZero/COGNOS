@@ -31,14 +31,21 @@ service CognosIpc {
     rpc HalGate(HalGateRequest) returns (HalGateResponse) {}
 
     // ResourceHint pushes a scheduling hint to the scheduler daemon.
-    rpc ResourceHint(ResourceHint) returns (Heartbeat) {}
+    // Types are fully qualified because the RPC method name collides with the
+    // `ResourceHint`/`Heartbeat` message names; unqualified references resolve
+    // to the method symbol first under protoc and fail (see grpc_tools protoc).
+    rpc ResourceHint(.cognos.ipc.v1.ResourceHint) returns (.cognos.ipc.v1.Heartbeat) {}
 
     // Heartbeat is a bidirectional liveness ping (unused stream direction in v0).
-    rpc Heartbeat(Heartbeat) returns (Heartbeat) {}
+    rpc Heartbeat(.cognos.ipc.v1.Heartbeat) returns (.cognos.ipc.v1.Heartbeat) {}
 
     // StreamEvents is a server-streaming RPC used by shells, dashboards
     // and observers to subscribe to the global event bus.
-    rpc StreamEvents(Heartbeat) returns (stream Event) {}
+    rpc StreamEvents(.cognos.ipc.v1.Heartbeat) returns (stream Event) {}
+
+    // GetPipelineMetrics returns aggregate HAL / parser / latency counters
+    // maintained by the serving daemon (HAL, intent-engine, or orchestrator).
+    rpc GetPipelineMetrics(PipelineMetricsRequest) returns (PipelineMetrics) {}
 }
 
 // ─── Envelope (the signed wrapper around every payload) ──────────────────────
@@ -96,6 +103,64 @@ message IntentResponse {
     CapabilityViolation violation = 5;
     // Wall-clock nanos when the response was produced.
     uint64 completed_at_ns  = 6;
+    // Parsed action graph. Set by the intent-engine when it answers a
+    // DispatchIntent with a constructed graph; absent otherwise.
+    IntentActionGraph action_graph = 7;
+    // Trace id echoed from the originating request (correlation for CLI/observers).
+    string trace_id = 8;
+}
+
+// ─── Action graph (intent-engine → orchestrator / HAL) ───────────────────────
+// The intent-engine parses an utterance into an ordered DAG of actions. Each
+// node is scored independently by HAL before anything executes. This mirrors
+// intent-engine/src/action_graph.rs on the wire.
+message IntentActionNode {
+    // Node id (UUID v4).
+    string node_id       = 1;
+    // Originating intent id (audit linkage).
+    string intent_id     = 2;
+    // Verb, e.g. "open_files".
+    string action        = 3;
+    // Target path or resource.
+    string target        = 4;
+    // Confidence inherited from the candidate action, [0.0, 1.0].
+    double confidence    = 5;
+    // Advisory pre-score for HAL; HAL recomputes authoritatively.
+    double hal_pre_score = 6;
+}
+
+message IntentActionEdge {
+    // Node that must complete first.
+    string from_node = 1;
+    // Node that depends on `from_node`.
+    string to_node   = 2;
+}
+
+// Flattened IntentSchema carried alongside the graph for audit / re-scoring.
+message IntentSchemaProto {
+    string intent_id                 = 1;
+    string raw_input                 = 2;
+    string goal                      = 3;
+    string domain                    = 4;
+    double confidence                = 5;
+    double ambiguity_score           = 6;
+    double risk_estimate             = 7;
+    repeated string required_context = 8;
+    bool   disambiguation_required   = 9;
+    string disambiguation_question   = 10;
+    double hal_pre_score             = 11;
+    bool   escalate_to_cloud         = 12;
+    // Provenance: empty on the LLM path, "keyword_fallback" on the degraded path.
+    string source                    = 13;
+}
+
+message IntentActionGraph {
+    // Nodes in deterministic execution order.
+    repeated IntentActionNode nodes = 1;
+    // Dependency edges (from → to).
+    repeated IntentActionEdge deps  = 2;
+    // The parsed intent that produced this graph.
+    IntentSchemaProto intent        = 3;
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────
@@ -221,4 +286,28 @@ message CapabilityViolation {
     string agent_id         = 5;
     // Trace id of the rejected request.
     string trace_id         = 6;
+}
+
+// ─── Pipeline metrics (observability) ────────────────────────────────────────
+message PipelineMetricsRequest {
+    // Optional trace id filter (reserved; v0 returns aggregate counters).
+    string trace_id = 1;
+}
+
+message PipelineMetrics {
+    // HAL gate outcomes (maintained by cognos-hal).
+    uint64 hal_granted            = 1;
+    uint64 hal_denied             = 2;
+    uint64 hal_approval_required  = 3;
+    // Intent parser counters (maintained by cognos-intent).
+    uint64 parser_cache_hits      = 4;
+    uint64 parser_cache_misses    = 5;
+    uint64 parser_fallback_uses   = 6;
+    // Last observed end-to-end latency sample (maintained by cognos-orchestrator).
+    double last_total_latency_ms      = 7;
+    double last_parse_latency_ms        = 8;
+    double last_orchestrate_latency_ms  = 9;
+    double last_execute_latency_ms      = 10;
+    string last_trace_id                = 11;
+    uint64 intent_requests              = 12;
 }

@@ -129,7 +129,7 @@ impl IpcRuntime {
                     // Acquire client lock only for this one agent, drop after use.
                     let result = {
                         let mut clients = clients.lock().await;
-                        if let Some(client) = clients.get_mut(&id) {
+                        if let Some(client) = clients.get_mut(id) {
                             if client.inner().is_some() {
                                 client.heartbeat(hb).await.err()
                             } else {
@@ -144,7 +144,7 @@ impl IpcRuntime {
                     } else {
                         // Update seq in agent registry.
                         let mut agents = agents.write().await;
-                        if let Some(entry) = agents.get_mut(&id) {
+                        if let Some(entry) = agents.get_mut(id) {
                             entry.last_seq = seq;
                         }
                     }
