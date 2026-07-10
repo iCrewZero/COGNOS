@@ -1,0 +1,43 @@
+{
+  "input": "open the robotics project",
+  "context": {
+    "last_active_domain": "robotics",
+    "last_active_files": ["motor.py", "pid.py"],
+    "current_time": "14:32",
+    "time_since_last_session": "2h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "open the robotics project",
+    "goal": "open_workspace",
+    "domain": "robotics",
+    "confidence": 0.7,
+    "ambiguity_score": 0.68,
+    "risk_estimate": 0.1,
+    "required_context": ["recent_project"],
+    "candidate_actions": [
+      {
+        "action": "open_files",
+        "target": "~/projects/motor-driver/motor.py",
+        "confidence": 0.71,
+        "recency_score": 0.55
+      },
+      {
+        "action": "open_files",
+        "target": "~/projects/pid-tuning/pid.py",
+        "confidence": 0.65,
+        "recency_score": 0.5
+      }
+    ],
+    "disambiguation_required": true,
+    "disambiguation_question": "The motor driver or the PID tuning project?",
+    "session_context": {
+      "last_active_domain": "robotics",
+      "last_active_files": ["motor.py", "pid.py"],
+      "current_time": "14:32",
+      "time_since_last_session": "2h"
+    },
+    "hal_pre_score": 0.1,
+    "escalate_to_cloud": true
+  }
+}

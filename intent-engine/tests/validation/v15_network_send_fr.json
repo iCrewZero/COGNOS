@@ -1,0 +1,37 @@
+{
+  "input": "transmets le compte-rendu PDF à l'équipe comptabilité",
+  "context": {
+    "last_active_domain": "finance",
+    "last_active_files": ["compte-rendu.pdf"],
+    "current_time": "17:05",
+    "time_since_last_session": "1h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440015",
+    "raw_input": "transmets le compte-rendu PDF à l'équipe comptabilité",
+    "goal": "network_send",
+    "domain": "finance",
+    "confidence": 0.86,
+    "ambiguity_score": 0.15,
+    "risk_estimate": 0.25,
+    "required_context": ["network"],
+    "candidate_actions": [
+      {
+        "action": "send_email",
+        "target": "comptabilite@example.com",
+        "confidence": 0.86,
+        "recency_score": 0.6
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "finance",
+      "last_active_files": ["compte-rendu.pdf"],
+      "current_time": "17:05",
+      "time_since_last_session": "1h"
+    },
+    "hal_pre_score": 0.25,
+    "escalate_to_cloud": false
+  }
+}

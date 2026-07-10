@@ -1,0 +1,43 @@
+{
+  "input": "refactor the auth module and run the tests",
+  "context": {
+    "last_active_domain": "coding",
+    "last_active_files": ["auth.rs", "auth_test.rs"],
+    "current_time": "15:40",
+    "time_since_last_session": "5m"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "refactor the auth module and run the tests",
+    "goal": "code_task",
+    "domain": "coding",
+    "confidence": 0.82,
+    "ambiguity_score": 0.35,
+    "risk_estimate": 0.4,
+    "required_context": ["repo_state"],
+    "candidate_actions": [
+      {
+        "action": "refactor_code",
+        "target": "~/proj/src/auth.rs",
+        "confidence": 0.82,
+        "recency_score": 0.9
+      },
+      {
+        "action": "run_tests",
+        "target": "~/proj/",
+        "confidence": 0.8,
+        "recency_score": 0.7
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "coding",
+      "last_active_files": ["auth.rs", "auth_test.rs"],
+      "current_time": "15:40",
+      "time_since_last_session": "5m"
+    },
+    "hal_pre_score": 0.4,
+    "escalate_to_cloud": false
+  }
+}

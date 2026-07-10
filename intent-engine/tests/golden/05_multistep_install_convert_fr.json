@@ -1,0 +1,43 @@
+{
+  "input": "installe ffmpeg puis convertis ma vidéo en mp4",
+  "context": {
+    "last_active_domain": "media",
+    "last_active_files": ["clip.mov"],
+    "current_time": "20:10",
+    "time_since_last_session": "2d"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "installe ffmpeg puis convertis ma vidéo en mp4",
+    "goal": "package_and_convert",
+    "domain": "media",
+    "confidence": 0.78,
+    "ambiguity_score": 0.3,
+    "risk_estimate": 0.5,
+    "required_context": ["pkg_manager"],
+    "candidate_actions": [
+      {
+        "action": "install_package",
+        "target": "ffmpeg",
+        "confidence": 0.85,
+        "recency_score": 0.4
+      },
+      {
+        "action": "convert_media",
+        "target": "~/media/clip.mov",
+        "confidence": 0.8,
+        "recency_score": 0.7
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "media",
+      "last_active_files": ["clip.mov"],
+      "current_time": "20:10",
+      "time_since_last_session": "2d"
+    },
+    "hal_pre_score": 0.5,
+    "escalate_to_cloud": false
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "input": "purge recursively everything under ~/Downloads/archive",
+  "context": {
+    "last_active_domain": "system",
+    "last_active_files": ["cleanup.log"],
+    "current_time": "19:10",
+    "time_since_last_session": "3h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440020",
+    "raw_input": "purge recursively everything under ~/Downloads/archive",
+    "goal": "delete_path",
+    "domain": "system",
+    "confidence": 0.83,
+    "ambiguity_score": 0.14,
+    "risk_estimate": 0.75,
+    "required_context": [],
+    "candidate_actions": [
+      {
+        "action": "delete_path",
+        "target": "~/Downloads/archive",
+        "confidence": 0.83,
+        "recency_score": 0.4
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "system",
+      "last_active_files": ["cleanup.log"],
+      "current_time": "19:10",
+      "time_since_last_session": "3h"
+    },
+    "hal_pre_score": 0.75,
+    "escalate_to_cloud": false
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "input": "delete everything in /etc",
+  "context": {
+    "last_active_domain": "system",
+    "last_active_files": [],
+    "current_time": "02:15",
+    "time_since_last_session": "12h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "delete everything in /etc",
+    "goal": "delete_path",
+    "domain": "system",
+    "confidence": 0.9,
+    "ambiguity_score": 0.1,
+    "risk_estimate": 0.95,
+    "required_context": [],
+    "candidate_actions": [
+      {
+        "action": "delete_files",
+        "target": "/etc",
+        "confidence": 0.9,
+        "recency_score": 0.2
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "system",
+      "last_active_files": [],
+      "current_time": "02:15",
+      "time_since_last_session": "12h"
+    },
+    "hal_pre_score": 0.95,
+    "escalate_to_cloud": false
+  }
+}

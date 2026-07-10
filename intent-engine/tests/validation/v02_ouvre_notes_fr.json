@@ -1,0 +1,37 @@
+{
+  "input": "ouvre mes notes de réunion",
+  "context": {
+    "last_active_domain": "work",
+    "last_active_files": ["reunion-lundi.md", "todo.txt"],
+    "current_time": "15:20",
+    "time_since_last_session": "3h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440002",
+    "raw_input": "ouvre mes notes de réunion",
+    "goal": "open_file",
+    "domain": "system",
+    "confidence": 0.86,
+    "ambiguity_score": 0.18,
+    "risk_estimate": 0.05,
+    "required_context": [],
+    "candidate_actions": [
+      {
+        "action": "open_file",
+        "target": "~/work/reunion-lundi.md",
+        "confidence": 0.86,
+        "recency_score": 0.75
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "work",
+      "last_active_files": ["reunion-lundi.md", "todo.txt"],
+      "current_time": "15:20",
+      "time_since_last_session": "3h"
+    },
+    "hal_pre_score": 0.05,
+    "escalate_to_cloud": false
+  }
+}
