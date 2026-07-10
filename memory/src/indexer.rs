@@ -185,10 +185,13 @@ impl<E: Embedder> Indexer<E> {
 /// Project domain from path structure (mirrors the ANFS tag engine rule):
 /// the segment after "projects".
 fn derive_domain(path: &str) -> Option<String> {
-    let lower = path.to_lowercase();
-    let parts: Vec<&str> = lower.split('/').filter(|s| !s.is_empty()).collect();
-    let idx = parts.iter().position(|p| *p == "projects")?;
-    parts.get(idx + 1).map(|s| s.to_string())
+    let parts: Vec<String> = Path::new(path)
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .map(|s| s.to_lowercase())
+        .collect();
+    let idx = parts.iter().position(|p| p == "projects")?;
+    parts.get(idx + 1).cloned()
 }
 
 #[cfg(test)]

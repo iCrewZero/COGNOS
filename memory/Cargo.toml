@@ -16,16 +16,18 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[dev-dependencies]
-tempfile = "3"
-
-# HTTP client for memory service IPC and ChromaDB REST API
-# Owner: iCrewZero — added cognos-anfs as optional dep so the chromadb feature resolves.
+# Optional deps gated by the features below. These MUST live under
+# [dependencies] (not [dev-dependencies]) — Cargo forbids optional
+# dev-dependencies, and the [features] table references them.
+# HTTP client for memory service IPC and ChromaDB REST API.
 reqwest = { version = "0.12", features = ["json"], optional = true }
 # ANFS integration for ChromaDB-backed memory indexing.
 cognos-anfs = { path = "anfs", optional = true }
-# For mlock in secure_pool
+# For mlock in secure_pool.
 libc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "cognos-memory"

@@ -12,15 +12,14 @@
 ///   - inotify bridge: pushes changed paths to Memory Agent's index queue
 
 use fuser::{
-    FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData,
-    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
-    TimeOrNow,
+    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData,
+    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyWrite, Request,
 };
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 const RECYCLE_DIR: &str = ".cognos/anfs/recycle";
@@ -276,7 +275,7 @@ impl Filesystem for AnfsFilesystem {
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let path = ino_to_path(ino, &self.real_root);
         match path.symlink_metadata() {
             Ok(meta) => reply.attr(&Duration::from_secs(1), &stat_to_attr(&meta, ino)),
@@ -310,7 +309,7 @@ impl Filesystem for AnfsFilesystem {
 
     fn write(
         &mut self,
-        req: &Request,
+        _req: &Request,
         ino: u64,
         _fh: u64,
         offset: i64,

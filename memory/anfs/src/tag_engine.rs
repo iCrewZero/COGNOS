@@ -79,13 +79,13 @@ pub fn derive_tags(path: &str) -> Vec<String> {
 /// the directory segment following "projects" (e.g.
 /// `~/projects/robo-arm/motor.py` → `robo-arm`).
 pub fn derive_domain(path: &str) -> Option<String> {
-    let lower = path.to_lowercase();
-    let parts: Vec<&str> = lower
-        .split('/')
-        .filter(|s| !s.is_empty())
+    let parts: Vec<String> = std::path::Path::new(path)
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .map(|s| s.to_lowercase())
         .collect();
-    let idx = parts.iter().position(|p| *p == "projects")?;
-    parts.get(idx + 1).map(|s| s.to_string())
+    let idx = parts.iter().position(|p| p == "projects")?;
+    parts.get(idx + 1).cloned()
 }
 
 #[cfg(test)]
