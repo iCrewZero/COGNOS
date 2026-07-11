@@ -13,22 +13,22 @@ name = "cognos-ipc-server"
 path = "src/bin/server_main.rs"
 
 [dependencies]
-tonic = "0.12"
-prost = "0.13"
+tonic = "0.14"
+prost = "0.14"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-stream = "0.3"
 tokio-stream = "0.1"
-tonic-health = "0.12"
+tonic-health = "0.14"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build = "0.14"
