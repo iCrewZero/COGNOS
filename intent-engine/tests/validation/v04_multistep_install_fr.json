@@ -1,0 +1,43 @@
+{
+  "input": "installe docker puis lance le conteneur postgres",
+  "context": {
+    "last_active_domain": "system",
+    "last_active_files": ["docker-compose.yml"],
+    "current_time": "16:45",
+    "time_since_last_session": "6h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440004",
+    "raw_input": "installe docker puis lance le conteneur postgres",
+    "goal": "install_package",
+    "domain": "system",
+    "confidence": 0.75,
+    "ambiguity_score": 0.35,
+    "risk_estimate": 0.45,
+    "required_context": ["pkg_manager"],
+    "candidate_actions": [
+      {
+        "action": "install_package",
+        "target": "docker",
+        "confidence": 0.8,
+        "recency_score": 0.4
+      },
+      {
+        "action": "install_package",
+        "target": "postgres",
+        "confidence": 0.7,
+        "recency_score": 0.5
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "system",
+      "last_active_files": ["docker-compose.yml"],
+      "current_time": "16:45",
+      "time_since_last_session": "6h"
+    },
+    "hal_pre_score": 0.45,
+    "escalate_to_cloud": false
+  }
+}

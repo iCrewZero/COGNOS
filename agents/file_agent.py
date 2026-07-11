@@ -74,13 +74,20 @@ class ValidatedPath:
         resolved = os.path.realpath(expanded)
 
         home = str(Path.home())
+        extra = os.environ.get("COGNOS_EXTRA_PATHS", "")
+        allowed_roots = [home]
+        for part in extra.split(os.pathsep):
+            part = part.strip()
+            if part:
+                allowed_roots.append(os.path.realpath(os.path.expanduser(part)))
+
         if "\x00" in resolved:
             raise PathViolation(f"Null byte in path: {raw!r}")
         if len(resolved) > 4096:
             raise PathViolation("Path too long (>4096 chars)")
-        if not resolved.startswith(home):
+        if not any(resolved.startswith(root) for root in allowed_roots):
             raise PathViolation(
-                f"Path '{resolved}' is outside user home '{home}' — "
+                f"Path '{resolved}' is outside allowed roots {allowed_roots} — "
                 "possible symlink escape or misconfiguration"
             )
 
@@ -198,6 +205,50 @@ class FileAgent(BaseAgent):
         vpath.path.write_text(content)
         self._audit("create_file", str(vpath), "success", note=f"{len(content)} chars")
         return OperationResult(True, f"Created {vpath.path.name}", str(vpath))
+
+    async def create_directory(self, path: str) -> OperationResult:
+        """Create a directory (mkdir -p semantics within allowed roots)."""
+        try:
+            vpath = ValidatedPath(path)
+        except PathViolation as e:
+            return OperationResult(False, str(e), path)
+
+        if vpath.path.exists():
+            if vpath.path.is_dir():
+                return OperationResult(
+                    True,
+                    f"Directory already exists: {vpath}",
+                    str(vpath),
+                    extra={"already_exists": True},
+                )
+            return OperationResult(False, f"Path exists and is not a directory: {path}")
+
+        hal_status = None
+        hal_risk = None
+        if self._hal is not None:
+            gate = await self._hal.gate("create_directory", str(vpath), 0.25, False)
+            hal_status = gate.get("status") or ("granted" if gate.get("approved") else "denied")
+            hal_risk = gate.get("risk_score")
+            if not gate.get("approved", True):
+                return OperationResult(
+                    False,
+                    f"HAL denied create_directory on {path}",
+                    path,
+                    extra={"hal_status": hal_status, "hal_risk_score": hal_risk},
+                )
+
+        vpath.path.mkdir(parents=True, exist_ok=True)
+        self._audit("create_directory", str(vpath), "success")
+        extra = {}
+        if hal_status is not None:
+            extra["hal_status"] = hal_status
+            extra["hal_risk_score"] = hal_risk
+        return OperationResult(
+            True,
+            f"Created directory {vpath}",
+            str(vpath),
+            extra=extra,
+        )
 
     async def list_directory(self, path: str) -> list[FileInfo]:
         """List directory contents. No HAL gate needed (read-only)."""

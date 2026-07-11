@@ -40,6 +40,8 @@ pub enum NodeState {
     Failed,
     /// Skipped because an upstream node failed or was cancelled.
     Skipped,
+    /// Blocked pending a HAL (Human Approval Layer) decision.
+    AwaitingHal,
 }
 
 impl Default for NodeState {

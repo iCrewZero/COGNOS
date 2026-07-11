@@ -20,8 +20,11 @@
 [Unit]
 Description=COGNOS UI agent — Wayland shell and widgets
 Documentation=https://cognos.os/docs/ui-agent
-After=graphical-session.target cognos-hal.service
-PartOf=graphical-session.target cognos.target
+After=network.target cognos-agents.service
+Wants=cognos-agents.service
+PartOf=cognos.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 # Owner: iCrewZero — changed from simple to exec to match all other COGNOS services
@@ -53,13 +56,11 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-ui-agent
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=cognos.target
 
 # v0: stub — UI agent binary path is illustrative
 # TODO(v1): convert to user-session unit (systemd/user/cognos-ui-agent.service)

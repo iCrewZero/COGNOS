@@ -1,0 +1,5 @@
+# Intentionally broken: underscore rule names (reproduces llama.cpp parse error)
+root ::= "{" ws "\"domain\":" ws nullable_string ws "}"
+nullable_string ::= string | "null"
+string ::= "\"" [^"\\]* "\""
+ws ::= [ \t]*

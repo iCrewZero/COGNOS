@@ -1,0 +1,43 @@
+{
+  "input": "ouvre le projet vidéo",
+  "context": {
+    "last_active_domain": "media",
+    "last_active_files": ["montage.prproj", "export.mp4"],
+    "current_time": "21:30",
+    "time_since_last_session": "1d"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440006",
+    "raw_input": "ouvre le projet vidéo",
+    "goal": "open_workspace",
+    "domain": "media",
+    "confidence": 0.66,
+    "ambiguity_score": 0.7,
+    "risk_estimate": 0.08,
+    "required_context": ["recent_project"],
+    "candidate_actions": [
+      {
+        "action": "open_files",
+        "target": "~/media/montage.prproj",
+        "confidence": 0.68,
+        "recency_score": 0.62
+      },
+      {
+        "action": "open_files",
+        "target": "~/media/export.mp4",
+        "confidence": 0.6,
+        "recency_score": 0.5
+      }
+    ],
+    "disambiguation_required": true,
+    "disambiguation_question": "Le projet de montage ou l'export MP4 ?",
+    "session_context": {
+      "last_active_domain": "media",
+      "last_active_files": ["montage.prproj", "export.mp4"],
+      "current_time": "21:30",
+      "time_since_last_session": "1d"
+    },
+    "hal_pre_score": 0.08,
+    "escalate_to_cloud": true
+  }
+}

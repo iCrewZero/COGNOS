@@ -9,11 +9,11 @@
 //!
 //! The meta-governance rules in v0 are deliberately conservative. Every
 //! policy change proposal must:
-///   1. be recorded as a proposal with a unique id,
-///   2. receive explicit human approval,
-///   3. wait at least 24 hours between approval and effect,
-///   4. be recorded in the audit chain, and
-///   5. be reversible — every applied change has a recorded revert procedure.
+//!   1. be recorded as a proposal with a unique id,
+//!   2. receive explicit human approval,
+//!   3. wait at least 24 hours between approval and effect,
+//!   4. be recorded in the audit chain, and
+//!   5. be reversible — every applied change has a recorded revert procedure.
 //!
 //! v0: stub implementation. The 24h delay is recorded but not enforced (no
 //! background scheduler); v1 will wire this to a real timer.
@@ -121,7 +121,7 @@ pub enum ProposalState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProposalRecord {
+pub struct ProposalRecord {
     id: ProposalId,
     change: PolicyChange,
     state: ProposalState,
@@ -279,7 +279,7 @@ pub enum MetaError {
     #[error("proposal {id} not pending (state: {state})")]
     NotPending { id: ProposalId, state: String },
     /// The proposal is not in the Ratified state (required for application).
-    #[error("proposal {id} not ratified (state: {state})")]
+    #[error("proposal {id} not ratified")]
     NotRatified { id: ProposalId },
     /// The proposal is not in the Applied state (required for revert).
     #[error("proposal {id} not applied (state: {state})")]

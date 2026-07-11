@@ -68,6 +68,7 @@ tzdata
 systemd-boot
 efibootmgr
 initramfs-tools
+live-boot
 
 # ─── Python (for COGNOS agents) ───────────────────────────────────────────────
 python3

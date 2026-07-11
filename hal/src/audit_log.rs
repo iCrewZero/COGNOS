@@ -220,9 +220,9 @@ impl AuditLog {
     pub fn verify(&self) -> VerifyResult {
         self.flush();
 
-        let path = {
+        let (path, chain_path) = {
             let inner = self.inner.lock().unwrap();
-            inner.log_path.clone()
+            (inner.log_path.clone(), inner.chain_path.clone())
         };
 
         let content = match std::fs::read_to_string(&path) {
@@ -243,7 +243,13 @@ impl AuditLog {
             line_num += 1;
             let entry: AuditEntry = match serde_json::from_str(raw_line) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => {
+                    return VerifyResult {
+                        valid: false,
+                        broken_at: Some(line_num),
+                        error: Some(format!("Invalid audit JSON at entry {}: {}", line_num, e)),
+                    };
+                }
             };
 
             // Recompute expected hash
@@ -267,6 +273,20 @@ impl AuditLog {
                 };
             }
             prev_hash = entry.chain_hash.clone();
+        }
+
+        let expected_head = Self::load_chain_tip(&chain_path);
+        if prev_hash != expected_head {
+            return VerifyResult {
+                valid: false,
+                broken_at: Some(line_num.saturating_add(1)),
+                error: Some(format!(
+                    "Chain head mismatch after entry {} (expected persisted head {}, got {})",
+                    line_num,
+                    expected_head,
+                    prev_hash
+                )),
+            };
         }
 
         VerifyResult { valid: true, broken_at: None, error: None }

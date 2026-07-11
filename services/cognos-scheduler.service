@@ -15,8 +15,11 @@
 [Unit]
 Description=COGNOS adaptive resource scheduler
 Documentation=https://cognos.os/docs/scheduler
-After=cognos-hal.service
+After=network.target cognos-hal.service cognos-llm.service
+Wants=cognos-llm.service
 PartOf=cognos.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=exec
@@ -47,8 +50,6 @@ SystemCallFilter=@system-service
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-scheduler
 

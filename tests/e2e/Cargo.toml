@@ -1,0 +1,23 @@
+[package]
+name = "cognos-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "COGNOS end-to-end integration tests (binary orchestration, MOCK_LLM)"
+
+[dev-dependencies]
+cognos-ipc-grpc = { path = "../../ipc/grpc" }
+cognos-hal = { path = "../../hal" }
+cognos-intent-engine = { path = "../../intent-engine" }
+cognos-orchestrator = { path = "../../orchestrator" }
+cognos-scheduler = { path = "../../scheduler" }
+cognos-memory = { path = "../../memory" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4"] }
+
+[[test]]
+name = "intent_pipeline"
+path = "intent_pipeline.rs"
+harness = true

@@ -1,0 +1,30 @@
+{
+  "input": "explique-moi la relativité générale en deux phrases",
+  "context": {
+    "last_active_domain": null,
+    "last_active_files": [],
+    "current_time": "18:15",
+    "time_since_last_session": "30m"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440010",
+    "raw_input": "explique-moi la relativité générale en deux phrases",
+    "goal": "out_of_scope",
+    "domain": null,
+    "confidence": 0.93,
+    "ambiguity_score": 0.05,
+    "risk_estimate": 0.0,
+    "required_context": [],
+    "candidate_actions": [],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": null,
+      "last_active_files": [],
+      "current_time": "18:15",
+      "time_since_last_session": "30m"
+    },
+    "hal_pre_score": 0.0,
+    "escalate_to_cloud": false
+  }
+}

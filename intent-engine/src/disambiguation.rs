@@ -365,6 +365,7 @@ mod tests {
             },
             hal_pre_score: 0.14,
             escalate_to_cloud: false,
+            source: None,
         }
     }
 

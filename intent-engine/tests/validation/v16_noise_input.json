@@ -1,0 +1,30 @@
+{
+  "input": "zzz ### ??? hmm",
+  "context": {
+    "last_active_domain": null,
+    "last_active_files": [],
+    "current_time": "23:59",
+    "time_since_last_session": null
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440016",
+    "raw_input": "zzz ### ??? hmm",
+    "goal": "await_input",
+    "domain": null,
+    "confidence": 0.15,
+    "ambiguity_score": 0.8,
+    "risk_estimate": 0.0,
+    "required_context": ["user_clarification"],
+    "candidate_actions": [],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": null,
+      "last_active_files": [],
+      "current_time": "23:59",
+      "time_since_last_session": null
+    },
+    "hal_pre_score": 0.0,
+    "escalate_to_cloud": true
+  }
+}

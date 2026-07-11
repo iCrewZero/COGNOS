@@ -4,8 +4,12 @@
 //! Every RPC is wrapped in a signed [`Envelope`] so the server can
 //! authenticate and authorize before any side effect.
 
+pub mod agent;
+#[cfg(unix)]
+pub mod approval_ui;
 pub mod auth;
 pub mod client;
+pub mod pipeline_metrics;
 pub mod runtime;
 pub mod server;
 

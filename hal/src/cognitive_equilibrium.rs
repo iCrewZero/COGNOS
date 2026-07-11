@@ -8,10 +8,10 @@
 //! forces and produces a recommendation: act, ask, or abstain.
 //!
 //! The model is deliberately simple:
-///   `net_benefit = helpfulness - (agency_loss * agency_weight)`
-///
-/// An action is recommended only if `net_benefit > 0`. The weights are
-/// recalibrated from explicit user feedback (override, confirmation, undo).
+//!   `net_benefit = helpfulness - (agency_loss * agency_weight)`
+//!
+//! An action is recommended only if `net_benefit > 0`. The weights are
+//! recalibrated from explicit user feedback (override, confirmation, undo).
 //!
 //! v0: stub implementation. Helpful / agency scores are computed from a few
 //! hand-written heuristics; a learned model is TODO(v1).

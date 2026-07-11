@@ -18,6 +18,18 @@ log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
+async-trait = "0.1"
+toml = "0.8"
+# HTTP-only client (localhost llama-server): no TLS backend, no FFI.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# Async runtime for the binary (own DispatchIntent server + IPC agent loop).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+# IPC transport: CognosServer/CognosClient + proto types. Path dep, low-level
+# crate — no cycle (cognos-ipc-grpc does not depend on the intent-engine).
+cognos-ipc-grpc = { path = "../ipc/grpc" }
+
+[dev-dependencies]
+wiremock = "0.6"
 
 [[bin]]
 name = "cognos-intent"

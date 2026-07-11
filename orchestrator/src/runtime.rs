@@ -4,13 +4,19 @@
 //! using the intent-engine, and dispatches them via the scheduler.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
+use cognos_ipc_grpc::client::CognosClient;
+use cognos_ipc_grpc::pipeline_metrics::{log_stage, METRICS};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::event_bus::{Event, EventBus};
+use crate::executor;
+use crate::hal_gate::{self, Decision, SideEffect};
+use crate::intent_adapter::{self, DecompositionPlan};
 use crate::scheduler::OrchestratorScheduler;
 use crate::task_graph::{NodeState, TaskGraph, TaskNode};
 
@@ -84,6 +90,8 @@ pub enum OrchestratorError {
     NoAgent(String),
     #[error("HAL denied required capability")]
     HalDenied,
+    #[error("HAL gate call failed: {0}")]
+    HalGate(String),
     #[error("internal orchestrator error")]
     Internal,
 }
@@ -122,6 +130,57 @@ impl AgentRegistry {
     }
 }
 
+// ─── Dispatch outcome ───────────────────────────────────────────────────────
+
+/// Result of attempting to dispatch a single [`TaskNode`], after the HAL gate.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DispatchOutcome {
+    /// The node was dispatched (marked [`NodeState::Running`]). Read-only nodes
+    /// take this path directly; side-effecting nodes only after HAL granted.
+    Dispatched,
+    /// HAL requires explicit user approval; the node is parked in
+    /// [`NodeState::AwaitingHal`] and NOT dispatched.
+    AwaitingApproval { risk_score: f64 },
+    /// HAL denied the action; the node is marked [`NodeState::Failed`] and NOT
+    /// dispatched.
+    Denied { reason: String },
+}
+
+/// Per-task execution record returned to the CLI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskExecutionRecord {
+    pub task_id: String,
+    pub action: String,
+    pub target: String,
+    pub capability: String,
+    pub agent: String,
+    pub status: String,
+    pub hal_decision: Option<String>,
+    pub hal_risk_score: Option<f64>,
+    pub message: Option<String>,
+}
+
+/// Per-stage latency for one intent pipeline run (ms).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineLatency {
+    pub total_ms: u64,
+    pub parse_ms: u64,
+    pub orchestrate_ms: u64,
+    pub execute_ms: u64,
+}
+
+/// End-to-end result of submit + execute for one user utterance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionReport {
+    pub intent_id: String,
+    pub trace_id: String,
+    pub success: bool,
+    pub summary: String,
+    pub tasks: Vec<TaskExecutionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency: Option<PipelineLatency>,
+}
+
 // ─── OrchestratorRuntime ────────────────────────────────────────────────────
 
 pub struct OrchestratorRuntime {
@@ -129,6 +188,14 @@ pub struct OrchestratorRuntime {
     pub bus: EventBus,
     pub scheduler: OrchestratorScheduler,
     pub agents: AgentRegistry,
+    /// Optional connected HAL gate client. When present, side-effecting nodes
+    /// are gated through it before dispatch; when absent, side-effecting nodes
+    /// fail closed (see [`OrchestratorRuntime::dispatch_node`]).
+    hal_gate: Option<CognosClient>,
+    /// Optional connected intent-engine client. When present, intents are
+    /// decomposed via `DispatchIntent`; on transport failure the legacy keyword
+    /// classifier is used instead (logged at WARNING).
+    intent_client: Option<CognosClient>,
 }
 
 impl OrchestratorRuntime {
@@ -138,7 +205,32 @@ impl OrchestratorRuntime {
             bus: EventBus::new(1024),
             scheduler: OrchestratorScheduler::new(),
             agents: AgentRegistry::default(),
+            hal_gate: None,
+            intent_client: None,
         }
+    }
+
+    /// Attach a connected intent-engine client. Once attached, every intent
+    /// submitted via [`OrchestratorRuntime::submit`] is sent to the engine for
+    /// decomposition; transport errors fall back to the local keyword path.
+    pub fn attach_intent_client(&mut self, client: CognosClient) {
+        self.intent_client = Some(client);
+    }
+
+    /// Whether an intent-engine client is attached.
+    pub fn has_intent_client(&self) -> bool {
+        self.intent_client.is_some()
+    }
+
+    /// Attach a connected HAL gate client. Once attached, every side-effecting
+    /// node routed through [`OrchestratorRuntime::dispatch_node`] is gated.
+    pub fn attach_hal_gate(&mut self, client: CognosClient) {
+        self.hal_gate = Some(client);
+    }
+
+    /// Whether a HAL gate client is attached.
+    pub fn has_hal_gate(&self) -> bool {
+        self.hal_gate.is_some()
     }
 
     /// Submit a high-level intent. Decomposes it into a multi-node DAG
@@ -151,43 +243,25 @@ impl OrchestratorRuntime {
     ) -> Result<TaskId, OrchestratorError> {
         info!(intent_id = ?intent.id, priority = ?intent.priority, text = %intent.text, "submitting intent");
 
-        // Step 1: Classify the intent into a canonical action type.
-        //
-        // In production, the orchestrator sends the raw intent text to the
-        // intent-engine (a separate Rust crate) via the IPC gRPC layer.
-        // The intent-engine runs its parser, disambiguator, and action graph
-        // builder, and returns a structured ActionGraph proto.
-        //
-        // For now, we use the local fallback classifier. When the
-        // intent-engine crate is wired as a workspace dependency, replace
-        // the call below with:
-        //
-        //   let ipc = self.ipc_client.as_ref()
-        //       .ok_or(OrchestratorError::Internal)?;
-        //   let response = ipc.dispatch_intent(Intent {
-        //       intent_id: intent.id.0.to_string(),
-        //       utterance: intent.text.clone(),
-        //       ..Default::default()
-        //   }).await.map_err(|e| OrchestratorError::DecompositionFailed(e.to_string()))?;
-        //   let action_graph: ActionGraph = parse_action_graph(&response.result_json);
-        //   let sub_tasks = action_graph_to_sub_tasks(&action_graph);
-        //
-        let action = classify_intent(&intent.text);
+        // Decompose via intent-engine when a client is attached; fall back to the
+        // legacy keyword classifier on transport errors only.
+        let plan = self.resolve_decomposition(&intent).await?;
 
-        // Step 2: Decompose into a DAG of sub-tasks.
-        let sub_tasks = decompose_into_tasks(&action, &intent);
-
-        // Step 3: Add each node to the graph, wiring dependencies.
+        // Add each node to the graph, wiring dependencies from the plan.
         let mut node_ids: Vec<TaskId> = Vec::new();
-        for (i, sub) in sub_tasks.iter().enumerate() {
-            // Pick the best agent for this sub-task's required capability.
+        for planned in &plan.nodes {
+            let sub = &planned.sub_task;
             let agent = self
                 .agents
                 .select_for_capability(&sub.capability)
                 .unwrap_or_else(|| AgentId("agent.coordinator".to_string()));
 
-            let intent_value = serde_json::to_value(sub)
-                .map_err(|e| OrchestratorError::DecompositionFailed(e.to_string()))?;
+            let intent_value = serde_json::json!({
+                "description": sub.description,
+                "capability": sub.capability,
+                "action": sub.action,
+                "target": sub.target,
+            });
 
             let node_id = self.graph.add_task(TaskNode {
                 id: TaskId(Uuid::nil()),
@@ -200,62 +274,475 @@ impl OrchestratorRuntime {
             });
             node_ids.push(node_id);
 
-            // Wire edges: each node depends on the previous one (linear chain).
-            // The intent-engine would produce a real DAG in production;
-            // this is a reasonable default for simple sequential intents.
-            if i > 0 {
-                self.graph
-                    .add_dependency(
-                        node_ids[i - 1],
-                        node_id,
-                        crate::task_graph::EdgeKind::Control,
-                    )
-                    .map_err(|e| OrchestratorError::DecompositionFailed(e.to_string()))?;
-            }
-
-            // Publish node creation event.
             let _ = self.bus.publish(Event::TaskCreated {
                 task_id: node_id,
                 agent_id: agent,
             });
         }
 
-        // Step 4: Mark the root node as Ready and enqueue it.
-        // Nodes with no predecessors (i == 0) are immediately ready.
-        if let Some(&root_id) = node_ids.first() {
-            if let Some(node) = self.graph.get_mut(root_id) {
+        for &(from_idx, to_idx) in &plan.edges {
+            let from = node_ids[from_idx];
+            let to = node_ids[to_idx];
+            self.graph
+                .add_dependency(from, to, crate::task_graph::EdgeKind::Control)
+                .map_err(|e| OrchestratorError::DecompositionFailed(e.to_string()))?;
+        }
+
+        let ready_roots: Vec<TaskId> = self.graph.ready_tasks();
+        if ready_roots.is_empty() {
+            return Err(OrchestratorError::DecompositionFailed(
+                "intent produced zero ready sub-tasks".into(),
+            ));
+        }
+
+        let priority_val = match intent.priority {
+            IntentPriority::Background => 0,
+            IntentPriority::Normal => 50,
+            IntentPriority::High => 75,
+            IntentPriority::Critical => 100,
+        };
+
+        for root_id in &ready_roots {
+            if let Some(node) = self.graph.get_mut(*root_id) {
                 node.state = NodeState::Ready;
             }
-
-            let priority_val = match intent.priority {
-                IntentPriority::Background => 0,
-                IntentPriority::Normal => 50,
-                IntentPriority::High => 75,
-                IntentPriority::Critical => 100,
-            };
-
+            let agent = self
+                .graph
+                .get(*root_id)
+                .map(|n| n.agent.clone())
+                .unwrap_or_else(|| AgentId("agent.coordinator".to_string()));
             self.scheduler.enqueue(
                 crate::scheduler::SchedEntry::new(
-                    root_id,
-                    self.agents
-                        .select_for_capability("general.execute")
-                        .unwrap_or_else(|| AgentId("agent.coordinator".to_string())),
+                    *root_id,
+                    agent.clone(),
                     crate::scheduler::Priority(priority_val),
                 ),
             );
             debug!(?root_id, "enqueued root task with scheduler");
             let _ = self.bus.publish(Event::TaskStateChanged {
-                task_id: root_id,
+                task_id: *root_id,
                 old_state: NodeState::Pending,
                 new_state: NodeState::Ready,
             });
+        }
 
-            info!(?root_id, total_nodes = node_ids.len(), "decomposed intent into DAG");
-            Ok(root_id)
+        let root_id = ready_roots[0];
+        info!(?root_id, total_nodes = node_ids.len(), roots = ready_roots.len(), "decomposed intent into DAG");
+        Ok(root_id)
+    }
+
+    /// Resolve an intent into a [`DecompositionPlan`].
+    ///
+    /// When an intent-engine client is attached, tries `DispatchIntent` first.
+    /// Transport / timeout failures log a WARNING and fall back to the legacy
+    /// keyword classifier. Semantic failures (bad status, cycle, …) propagate
+    /// as [`OrchestratorError::DecompositionFailed`] without falling back.
+    async fn resolve_decomposition(
+        &self,
+        intent: &Intent,
+    ) -> Result<DecompositionPlan, OrchestratorError> {
+        if let Some(client) = &self.intent_client {
+            match intent_adapter::decompose_via_intent_engine(client, intent).await {
+                Ok(plan) => {
+                    info!(
+                        nodes = plan.nodes.len(),
+                        edges = plan.edges.len(),
+                        "decomposed intent via intent-engine"
+                    );
+                    return Ok(plan);
+                }
+                Err(e) if e.is_transport() => {
+                    warn!(
+                        error = %e,
+                        "intent-engine unreachable — falling back to local keyword decomposition"
+                    );
+                }
+                Err(e) => {
+                    return Err(OrchestratorError::DecompositionFailed(e.to_string()));
+                }
+            }
+        }
+        let plan = intent_adapter::decompose_locally(intent);
+        debug!(
+            nodes = plan.nodes.len(),
+            "decomposed intent via local keyword fallback"
+        );
+        Ok(plan)
+    }
+
+    /// Dispatch a single ready node to its agent, gating side-effecting nodes
+    /// through HAL first.
+    ///
+    /// This is the orchestrator's execution point: **every action with a side
+    /// effect passes through [`hal_gate::gate_action`] before it is dispatched
+    /// to an agent.** Read-only nodes are dispatched immediately. Side-effecting
+    /// nodes are gated:
+    ///   * `Granted`           → the node is marked [`NodeState::Running`]
+    ///     (dispatched) and the grant proceeds;
+    ///   * `ApprovalRequired`  → the node is parked in [`NodeState::AwaitingHal`];
+    ///   * `Denied`            → the node is marked [`NodeState::Failed`].
+    ///
+    /// If a node is side-effecting but no HAL gate client is attached, the
+    /// orchestrator **fails closed**: the node is not dispatched and
+    /// [`OrchestratorError::HalDenied`] is returned. This guarantees no
+    /// side-effecting action is ever dispatched ungated.
+    pub async fn dispatch_node(
+        &mut self,
+        node_id: TaskId,
+        trace_id: &str,
+    ) -> Result<(DispatchOutcome, Option<String>), OrchestratorError> {
+        // Extract the action descriptor from the node's intent blob.
+        let (op, capability, path, source_agent) = {
+            let node = self
+                .graph
+                .get(node_id)
+                .ok_or(OrchestratorError::Internal)?;
+            let field = |key: &str| {
+                node.intent
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            };
+            let op = field("action").unwrap_or_else(|| "execute".to_string());
+            let capability = field("capability").unwrap_or_else(|| "general.execute".to_string());
+            // SubTasks don't carry a concrete target yet; fall back to the
+            // human-readable description so HAL still gets a resource string.
+            let path = field("target")
+                .or_else(|| field("path"))
+                .or_else(|| field("description"))
+                .unwrap_or_default();
+            (op, capability, path, node.agent.0.clone())
+        };
+
+        // Read-only work is dispatched without a gate.
+        if !hal_gate::is_side_effecting(&capability) {
+            self.graph.mark_running(node_id);
+            debug!(?node_id, %capability, "dispatched read-only node (no gate)");
+            return Ok((DispatchOutcome::Dispatched, None));
+        }
+
+        // Side-effecting work must pass HAL. Fail closed when no gate is wired.
+        let Some(client) = self.hal_gate.as_ref() else {
+            warn!(?node_id, %capability, "side-effecting node with no HAL gate — failing closed");
+            if let Some(node) = self.graph.get_mut(node_id) {
+                node.state = NodeState::Failed;
+            }
+            return Err(OrchestratorError::HalDenied);
+        };
+
+        let action = SideEffect::new(op, path, capability, source_agent);
+        let decision = hal_gate::gate_action(client, &action, trace_id)
+            .await
+            .map_err(|e| OrchestratorError::HalGate(e.to_string()))?;
+
+        match decision {
+            Decision::Granted { risk_score, .. } => {
+                self.graph.mark_running(node_id);
+                info!(?node_id, action = %action.op, risk_score, "HAL granted — dispatching");
+                Ok((
+                    DispatchOutcome::Dispatched,
+                    Some(format!("granted (risk={risk_score:.2})")),
+                ))
+            }
+            Decision::ApprovalRequired { risk_score } => {
+                if let Some(node) = self.graph.get_mut(node_id) {
+                    let old = node.state;
+                    node.state = NodeState::AwaitingHal;
+                    let _ = self.bus.publish(Event::TaskStateChanged {
+                        task_id: node_id,
+                        old_state: old,
+                        new_state: NodeState::AwaitingHal,
+                    });
+                }
+                info!(
+                    ?node_id,
+                    action = %action.op,
+                    risk_score,
+                    "HAL requires approval — waiting on Unix gate"
+                );
+
+                #[cfg(unix)]
+                {
+                    use crate::approval_socket::{blocking_gate, gate_timeout, reason_label};
+
+                    let action_for_gate = action.clone();
+                    let trace = trace_id.to_string();
+                    let wait = tokio::time::timeout(
+                        gate_timeout(),
+                        tokio::task::spawn_blocking(move || {
+                            blocking_gate(&action_for_gate, &trace)
+                        }),
+                    )
+                    .await;
+
+                    match wait {
+                        Ok(Ok(Ok(resp))) if resp.approved => {
+                            self.graph.mark_running(node_id);
+                            info!(
+                                ?node_id,
+                                reason = reason_label(&resp.reason),
+                                "HAL user approval granted — dispatching"
+                            );
+                            return Ok((
+                                DispatchOutcome::Dispatched,
+                                Some(format!(
+                                    "user_approved (risk={:.2}, reason={})",
+                                    resp.hal_score,
+                                    reason_label(&resp.reason)
+                                )),
+                            ));
+                        }
+                        Ok(Ok(Ok(resp))) => {
+                            if let Some(node) = self.graph.get_mut(node_id) {
+                                node.state = NodeState::Failed;
+                            }
+                            let reason = format!(
+                                "user denied (hal_reason={})",
+                                reason_label(&resp.reason)
+                            );
+                            warn!(?node_id, %reason, "HAL user denied after approval wait");
+                            return Ok((
+                                DispatchOutcome::Denied { reason: reason.clone() },
+                                Some(format!("denied: {reason}")),
+                            ));
+                        }
+                        Ok(Ok(Err(e))) => {
+                            if let Some(node) = self.graph.get_mut(node_id) {
+                                node.state = NodeState::Failed;
+                            }
+                            let reason = format!("approval gate error: {e}");
+                            warn!(?node_id, %reason, "HAL approval gate failed");
+                            return Ok((
+                                DispatchOutcome::Denied { reason: reason.clone() },
+                                Some(format!("denied: {reason}")),
+                            ));
+                        }
+                        Ok(Err(e)) => {
+                            if let Some(node) = self.graph.get_mut(node_id) {
+                                node.state = NodeState::Failed;
+                            }
+                            let reason = format!("approval gate task failed: {e}");
+                            return Ok((
+                                DispatchOutcome::Denied { reason: reason.clone() },
+                                Some(format!("denied: {reason}")),
+                            ));
+                        }
+                        Err(_) => {
+                            if let Some(node) = self.graph.get_mut(node_id) {
+                                node.state = NodeState::Failed;
+                            }
+                            let secs = crate::approval_socket::approval_timeout_secs();
+                            let reason = format!(
+                                "approval timeout after {secs}s — auto-denied"
+                            );
+                            warn!(?node_id, %reason, "orchestrator approval wait timed out");
+                            return Ok((
+                                DispatchOutcome::Denied { reason: reason.clone() },
+                                Some(format!("denied: {reason}")),
+                            ));
+                        }
+                    }
+                }
+
+                #[cfg(not(unix))]
+                {
+                    Ok((
+                        DispatchOutcome::AwaitingApproval { risk_score },
+                        Some(format!("approval_required (risk={risk_score:.2})")),
+                    ))
+                }
+            }
+            Decision::Denied { reason, risk_score } => {
+                if let Some(node) = self.graph.get_mut(node_id) {
+                    node.state = NodeState::Failed;
+                }
+                warn!(?node_id, action = %action.op, %reason, "HAL denied — not dispatching");
+                Ok((
+                    DispatchOutcome::Denied {
+                        reason: reason.clone(),
+                    },
+                    Some(format!("denied: {reason} (risk={risk_score:.2})")),
+                ))
+            }
+        }
+    }
+
+    /// Clear the task graph and scheduler between ingress requests.
+    pub fn reset_execution_state(&mut self) {
+        self.graph = TaskGraph::new();
+        self.scheduler = OrchestratorScheduler::new();
+    }
+
+    /// Submit an intent, run the scheduler until idle, and return an execution
+    /// report suitable for the CLI / ingress handler.
+    pub async fn submit_and_execute(
+        &mut self,
+        utterance: &str,
+        user_id: &str,
+        trace_id: &str,
+    ) -> Result<ExecutionReport, OrchestratorError> {
+        self.reset_execution_state();
+        let pipeline_started = Instant::now();
+        let intent = Intent::new(user_id, utterance);
+        let intent_id = intent.id.0.to_string();
+
+        let parse_started = Instant::now();
+        let _root = self.submit(intent).await?;
+        let parse_ms = parse_started.elapsed().as_millis() as u64;
+
+        let mut tasks = Vec::new();
+        let mut execute_ms = 0u64;
+
+        while let Some(entry) = self.scheduler.next() {
+            let node_id = entry.task_id;
+            let (action, target, capability, agent) = {
+                let node = self.graph.get(node_id).ok_or(OrchestratorError::Internal)?;
+                let field = |key: &str| {
+                    node.intent
+                        .get(key)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                };
+                (
+                    field("action").unwrap_or_default(),
+                    field("target").unwrap_or_default(),
+                    field("capability").unwrap_or_default(),
+                    node.agent.0.clone(),
+                )
+            };
+
+            let (outcome, hal_note) = self.dispatch_node(node_id, trace_id).await?;
+            let (status, message, success) = match &outcome {
+                DispatchOutcome::Dispatched => {
+                    let node_snapshot = self
+                        .graph
+                        .get(node_id)
+                        .cloned()
+                        .ok_or(OrchestratorError::Internal)?;
+                    let exec_started = Instant::now();
+                    let result =
+                        executor::execute_node(&node_snapshot, "", trace_id).await;
+                    execute_ms += exec_started.elapsed().as_millis() as u64;
+                    let ok = result.error.is_none();
+                    self.graph.mark_completed(node_id, result.clone());
+                    self.scheduler.complete(node_id);
+                    self.enqueue_ready_dependents(node_id);
+                    (
+                        if ok { "succeeded" } else { "failed" }.to_string(),
+                        result.error.clone().or_else(|| {
+                            result
+                                .output
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string())
+                        }),
+                        ok,
+                    )
+                }
+                DispatchOutcome::AwaitingApproval { .. } => {
+                    ("awaiting_hal".to_string(), hal_note.clone(), false)
+                }
+                DispatchOutcome::Denied { reason } => {
+                    ("denied".to_string(), Some(reason.clone()), false)
+                }
+            };
+
+            tasks.push(TaskExecutionRecord {
+                task_id: node_id.0.to_string(),
+                action,
+                target,
+                capability,
+                agent,
+                status: status.clone(),
+                hal_decision: hal_note,
+                hal_risk_score: None,
+                message,
+            });
+
+            if !success && status != "awaiting_hal" {
+                break;
+            }
+        }
+
+        let overall = !tasks.is_empty() && tasks.iter().all(|t| t.status == "succeeded");
+        let summary = if overall {
+            format!("completed {} task(s)", tasks.len())
         } else {
-            Err(OrchestratorError::DecompositionFailed(
-                "intent produced zero sub-tasks".into(),
-            ))
+            format!(
+                "finished with failures — last status: {}",
+                tasks.last().map(|t| t.status.as_str()).unwrap_or("none")
+            )
+        };
+
+        let total_ms = pipeline_started.elapsed().as_millis() as u64;
+        let orchestrate_ms = total_ms
+            .saturating_sub(parse_ms)
+            .saturating_sub(execute_ms);
+        let latency = PipelineLatency {
+            total_ms,
+            parse_ms,
+            orchestrate_ms,
+            execute_ms,
+        };
+        METRICS.record_latency(trace_id, parse_ms, orchestrate_ms, execute_ms);
+        log_stage(trace_id, "orchestration", orchestrate_ms);
+        log_stage(trace_id, "execution", execute_ms);
+        tracing::info!(
+            trace_id = %trace_id,
+            stage = "pipeline_total",
+            latency_ms = total_ms,
+            parse_ms = parse_ms,
+            orchestrate_ms = orchestrate_ms,
+            execute_ms = execute_ms,
+            "pipeline stage"
+        );
+
+        Ok(ExecutionReport {
+            intent_id,
+            trace_id: trace_id.to_string(),
+            success: overall,
+            summary,
+            tasks,
+            latency: Some(latency),
+        })
+    }
+
+    fn enqueue_ready_dependents(&mut self, completed: TaskId) {
+        let children: Vec<TaskId> = self
+            .graph
+            .edges
+            .iter()
+            .filter(|e| e.from == completed)
+            .map(|e| e.to)
+            .collect();
+        for child in children {
+            let ready = self
+                .graph
+                .edges
+                .iter()
+                .filter(|e| e.to == child)
+                .all(|e| {
+                    self.graph
+                        .get(e.from)
+                        .map(|n| n.state == NodeState::Succeeded)
+                        .unwrap_or(false)
+                });
+            if !ready {
+                continue;
+            }
+            let agent = self.graph.get(child).map(|n| n.agent.clone());
+            if let Some(node) = self.graph.get_mut(child) {
+                if node.state == NodeState::Pending {
+                    node.state = NodeState::Ready;
+                    if let Some(agent) = agent {
+                        self.scheduler.enqueue(crate::scheduler::SchedEntry::new(
+                            child,
+                            agent,
+                            crate::scheduler::Priority(50),
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -343,7 +830,7 @@ impl Default for OrchestratorRuntime {
 // ─── Intent classification ──────────────────────────────────────────────────
 
 /// Map natural-language intent text to a canonical action type.
-fn classify_intent(text: &str) -> String {
+pub(crate) fn classify_intent(text: &str) -> String {
     let lower = text.to_lowercase();
 
     let rules: &[(&str, &str)] = &[
@@ -381,17 +868,17 @@ fn classify_intent(text: &str) -> String {
 
 // ─── Task decomposition ─────────────────────────────────────────────────────
 
-/// A sub-task produced by decomposing an intent.
+/// A sub-task produced by decomposing an intent (legacy keyword path).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SubTask {
+pub(crate) struct SubTask {
     pub description: String,
     pub capability: String,
     pub action: String,
 }
 
 /// Break a classified intent into an ordered list of sub-tasks.
-/// Produces a linear chain; the intent-engine would produce a real DAG.
-fn decompose_into_tasks(action: &str, intent: &Intent) -> Vec<SubTask> {
+/// Produces a linear chain; kept as the transport-failure fallback.
+pub(crate) fn decompose_into_tasks(action: &str, intent: &Intent) -> Vec<SubTask> {
     match action {
         "file.open" => vec![
             SubTask {
@@ -481,7 +968,7 @@ fn collect_descendant_states(
     task_id: TaskId,
     states: &mut Vec<NodeState>,
 ) {
-    if let Some(node) = graph.get(task_id) {
+    if graph.get(task_id).is_some() {
         // Walk outgoing edges to find successor task IDs.
         for edge in graph.edges.iter().filter(|e| e.from == task_id) {
             if let Some(dep) = graph.get(edge.to) {

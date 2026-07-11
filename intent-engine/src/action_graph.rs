@@ -79,6 +79,54 @@ impl ActionGraph {
         g
     }
 
+    /// Build a graph directly from a parsed [`IntentSchema`], without going
+    /// through disambiguation. One node per candidate action (independent, no
+    /// edges); if the schema carries no candidates, a single node is derived
+    /// from the goal so the graph is never empty. This is the path the
+    /// intent-engine binary uses to answer `DispatchIntent`.
+    pub fn from_schema(schema: &IntentSchema) -> Self {
+        let mut g = Self::new();
+        if schema.candidate_actions.is_empty() {
+            g.add_node(ActionNode {
+                node_id: Uuid::new_v4(),
+                intent_id: schema.intent_id,
+                action: schema.goal.clone(),
+                target: String::new(),
+                confidence: schema.confidence,
+                hal_pre_score: schema.hal_pre_score,
+            });
+        } else {
+            for cand in &schema.candidate_actions {
+                g.add_node(ActionNode {
+                    node_id: Uuid::new_v4(),
+                    intent_id: schema.intent_id,
+                    action: cand.action.clone(),
+                    target: cand.target.clone(),
+                    confidence: cand.confidence,
+                    hal_pre_score: schema.hal_pre_score,
+                });
+            }
+        }
+        g
+    }
+
+    /// All nodes (unordered). For deterministic ordering use
+    /// [`ActionGraph::execution_order`].
+    pub fn nodes(&self) -> Vec<ActionNode> {
+        self.nodes.values().cloned().collect()
+    }
+
+    /// All dependency edges as `(from, to)` pairs, where `to` depends on `from`.
+    pub fn dependencies(&self) -> Vec<(Uuid, Uuid)> {
+        let mut out = Vec::new();
+        for (from, tos) in &self.edges {
+            for to in tos {
+                out.push((*from, *to));
+            }
+        }
+        out
+    }
+
     /// Add a node, returning its id.
     pub fn add_node(&mut self, node: ActionNode) -> Uuid {
         let id = node.node_id;
@@ -260,6 +308,7 @@ mod tests {
             },
             hal_pre_score: 0.14,
             escalate_to_cloud: false,
+            source: None,
         };
         let resolved = ResolvedIntent {
             intent_id,

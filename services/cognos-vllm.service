@@ -1,0 +1,45 @@
+# COGNOS/OS — vLLM inference service (replaces cognos-llm.service / llama-server)
+#
+# Serves Qwen2.5-7B-Instruct-AWQ with XGrammar structured output for the
+# intent-engine production backend (HttpVllmBackend).
+#
+# Rootfs note: this unit supersedes cognos-llm.service once the image ships
+# vLLM instead of llama.cpp GGUF weights.
+#
+# Owner: COGNOS core team
+
+[Unit]
+Description=COGNOS vLLM inference server
+Documentation=https://cognos.os/docs/intent
+After=network.target
+Wants=network-online.target
+PartOf=cognos.target
+
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Service]
+Type=exec
+User=cognos
+Group=cognos
+EnvironmentFile=-/etc/cognos/vllm.env
+# Port from intent.toml inference.endpoint (default 8080).
+ExecStart=/bin/bash -lc 'set -euo pipefail; port="$(sed -n "s/.*endpoint = \"http:\\/\\/127\\.0\\.0\\.1:\\([0-9][0-9]*\\)\".*/\\1/p" /etc/cognos/intent.toml | head -n1)"; : "${port:=8080}"; model="$(sed -n "s/^model = \"\\(.*\\)\"/\\1/p" /etc/cognos/vllm.env 2>/dev/null | head -n1)"; : "${model:=Qwen/Qwen2.5-7B-Instruct-AWQ}"; exec /opt/cognos/vllm-venv/bin/vllm serve "$model" --host 127.0.0.1 --port "$port" --quantization awq --max-model-len 4096 --gpu-memory-utilization 0.85 --trust-remote-code'
+ExecStartPost=/bin/bash -lc 'set -euo pipefail; port="$(sed -n "s/.*endpoint = \"http:\\/\\/127\\.0\\.0\\.1:\\([0-9][0-9]*\\)\".*/\\1/p" /etc/cognos/intent.toml | head -n1)"; : "${port:=8080}"; for i in $(seq 1 60); do curl --fail --silent --show-error "http://127.0.0.1:${port}/v1/models" >/dev/null && exit 0; sleep 2; done; echo "vLLM health check failed" >&2; exit 1'
+Restart=on-failure
+RestartSec=10s
+SyslogIdentifier=cognos-vllm
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=cognos.target

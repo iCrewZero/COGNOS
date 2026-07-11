@@ -1,0 +1,7 @@
+# Intentionally broken: multiline root without grouping (reproduces llama.cpp parse error)
+root ::= "{" ws
+  "\"intent_id\":" ws string ws "," ws
+  "\"raw_input\":" ws string ws
+  "}"
+ws ::= [ \t\n]*
+string ::= "\"" [^"\\]* "\""

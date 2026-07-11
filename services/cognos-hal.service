@@ -16,9 +16,12 @@
 [Unit]
 Description=COGNOS HAL — risk-weighted human governance daemon
 Documentation=https://cognos.os/docs/hal
-After=network.target
+After=network.target cognos-ipc.service
+Requires=cognos-ipc.service
 PartOf=cognos.target
 RequiresMountsFor=/var/lib/cognos/hal
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=exec
@@ -50,8 +53,6 @@ ReadWritePaths=/var/lib/cognos/hal
 # --- Restart policy ---
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=60
 
 SyslogIdentifier=cognos-hal
 

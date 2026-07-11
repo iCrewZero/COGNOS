@@ -7,9 +7,9 @@ set -euo pipefail
 #
 # Purpose:
 #   Assembles a bootable hybrid ISO image (BIOS via ISOLINUX + UEFI via GRUB)
-#   containing the COGNOS kernel, initrd, and rootfs squashfs. Produces:
-#     build/cognos-v0.iso
-#     build/cognos-v0.iso.sha256
+#   containing the COGNOS kernel, initrd, and live rootfs squashfs. Produces:
+#     build/cognos.iso
+#     build/cognos.iso.sha256
 #
 # Usage:
 #   ./iso_builder.sh [--keep-work] [--verify-only]
@@ -55,11 +55,11 @@ readonly SQUASHFS="$BUILD_DIR/rootfs.squashfs"
 readonly SQUASHFS_SHA="$BUILD_DIR/rootfs.squashfs.sha256"
 readonly ROOTFS_DIR="$BUILD_DIR/rootfs_work/rootfs"
 
-readonly ISO_OUTPUT="$BUILD_DIR/cognos-v0.iso"
-readonly ISO_SHA256="$BUILD_DIR/cognos-v0.iso.sha256"
-readonly ISO_LABEL="${ISO_LABEL:-COGNOS_V0}"
+readonly ISO_OUTPUT="${ISO_OUTPUT:-$BUILD_DIR/cognos.iso}"
+readonly ISO_SHA256="${ISO_SHA256:-${ISO_OUTPUT}.sha256}"
+readonly ISO_LABEL="${ISO_LABEL:-COGNOS}"
 
-readonly KERNEL_CMDLINE="${KERNEL_CMDLINE:-boot=live components=cognos-hal,cognos-intent,cognos-scheduler quiet splash}"
+readonly KERNEL_CMDLINE="${KERNEL_CMDLINE:-boot=live components console=ttyS0,115200 console=tty1 systemd.show_status=1}"
 
 KEEP_WORK=0
 VERIFY_ONLY=0
@@ -100,7 +100,7 @@ select_iso_tool() {
 # ─── Prerequisites ────────────────────────────────────────────────────────────
 check_prerequisites() {
     local missing=()
-    for cmd in sha256sum mmd mcopy; do
+    for cmd in sha256sum mmd mcopy mkfs.vfat; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
@@ -164,9 +164,9 @@ copy_kernel_and_initrd() {
 # ─── 3. copy_rootfs_squashfs ──────────────────────────────────────────────────
 copy_rootfs_squashfs() {
     log "Copying squashfs into ISO"
-    cp "$SQUASHFS" "$ISO_ROOT/live/rootfs.squashfs"
+    cp "$SQUASHFS" "$ISO_ROOT/live/filesystem.squashfs"
     if [[ -f "$SQUASHFS_SHA" ]]; then
-        cp "$SQUASHFS_SHA" "$ISO_ROOT/live/rootfs.squashfs.sha256"
+        cp "$SQUASHFS_SHA" "$ISO_ROOT/live/filesystem.squashfs.sha256"
     fi
 }
 

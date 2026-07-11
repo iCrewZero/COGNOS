@@ -1,0 +1,68 @@
+# COGNOS/OS — Local llama.cpp inference server
+#
+# Purpose:
+#   Runs `llama-server` against the GGUF model staged under
+#   `/var/lib/cognos/models/`. The intent engine talks to this server over the
+#   local network stack and may fall back to offline keyword parsing if it is
+#   absent or unhealthy.
+#
+# Boot note:
+#   This unit is intentionally optional in `cognos.target` (`Wants=`, not
+#   `Requires=`) so the system can still boot in degraded offline mode when the
+#   model is missing or the server fails to start.
+#
+# Owner: COGNOS core team
+[Unit]
+Description=COGNOS local llama.cpp server
+Documentation=https://cognos.os/docs/intent
+After=network.target cognos-hal.service
+Wants=cognos-hal.service
+PartOf=cognos.target
+RequiresMountsFor=/var/lib/cognos/models
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=cognos
+Group=cognos
+Slice=cognos.slice
+
+# The port is derived from /etc/cognos/intent.toml so intent + LLM stay in sync.
+ExecStart=/bin/bash -lc 'set -euo pipefail; model="$(find /var/lib/cognos/models -maxdepth 1 -type f -name "*.gguf" | sort | head -n1)"; [[ -n "$model" ]] || { echo "No GGUF model found in /var/lib/cognos/models" >&2; exit 1; }; port="$(sed -n "s/.*endpoint = \"http:\\/\\/127\\.0\\.0\\.1:\\([0-9][0-9]*\\)\".*/\\1/p" /etc/cognos/intent.toml | head -n1)"; : "${port:=8080}"; exec /usr/bin/llama-server --model "$model" --port "$port" --host 127.0.0.1'
+
+# Retry /health briefly after startup so failures surface early in the journal.
+ExecStartPost=/bin/bash -lc 'set -euo pipefail; port="$(sed -n "s/.*endpoint = \"http:\\/\\/127\\.0\\.0\\.1:\\([0-9][0-9]*\\)\".*/\\1/p" /etc/cognos/intent.toml | head -n1)"; : "${port:=8080}"; for i in $(seq 1 20); do curl --fail --silent --show-error "http://127.0.0.1:${port}/health" >/dev/null && exit 0; sleep 1; done; echo "llama-server health check failed" >&2; exit 1'
+
+WorkingDirectory=/var/lib/cognos/models
+RuntimeDirectory=cognos
+StateDirectory=cognos/models
+
+MemoryMax=24G
+CPUQuota=400%
+
+# --- Hardening ---
+# ProtectSystem=strict is safe because model files are read-only and runtime
+# writes stay inside systemd-managed state/runtime directories.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=true
+# llama.cpp may allocate executable memory for optimized kernels/JIT paths.
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+ReadOnlyPaths=/var/lib/cognos/models
+
+Restart=on-failure
+RestartSec=5s
+
+SyslogIdentifier=cognos-llm
+
+[Install]
+WantedBy=cognos.target

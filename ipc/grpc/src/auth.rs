@@ -138,7 +138,7 @@ pub fn verify_token(
         });
         mac.update(b"dummy|");
         mac.update(dummy_expiry.to_string().as_bytes());
-        let _ = mac.verify(supplied_sig.as_slice());
+        let _ = mac.verify_slice(supplied_sig.as_slice());
 
         return Err(AuthError::UnknownAgent(agent_id));
     }

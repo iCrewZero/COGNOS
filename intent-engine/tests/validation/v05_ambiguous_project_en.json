@@ -1,0 +1,43 @@
+{
+  "input": "open the analytics project",
+  "context": {
+    "last_active_domain": "finance",
+    "last_active_files": ["dashboard.py", "ledger.csv"],
+    "current_time": "13:10",
+    "time_since_last_session": "4h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440005",
+    "raw_input": "open the analytics project",
+    "goal": "open_workspace",
+    "domain": "finance",
+    "confidence": 0.68,
+    "ambiguity_score": 0.72,
+    "risk_estimate": 0.1,
+    "required_context": ["recent_project"],
+    "candidate_actions": [
+      {
+        "action": "open_files",
+        "target": "~/finance/dashboard.py",
+        "confidence": 0.7,
+        "recency_score": 0.6
+      },
+      {
+        "action": "open_files",
+        "target": "~/finance/ledger.csv",
+        "confidence": 0.65,
+        "recency_score": 0.55
+      }
+    ],
+    "disambiguation_required": true,
+    "disambiguation_question": "The dashboard script or the ledger CSV?",
+    "session_context": {
+      "last_active_domain": "finance",
+      "last_active_files": ["dashboard.py", "ledger.csv"],
+      "current_time": "13:10",
+      "time_since_last_session": "4h"
+    },
+    "hal_pre_score": 0.1,
+    "escalate_to_cloud": true
+  }
+}

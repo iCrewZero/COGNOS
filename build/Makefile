@@ -21,7 +21,12 @@ BUILD_DIR := $(shell cd "$(dir $(lastword $(MAKEFILE_LIST)))" && pwd)
 PROJECT_ROOT := $(shell cd "$(BUILD_DIR)/.." && pwd)
 OUTPUT_DIR := $(BUILD_DIR)/output
 
-.PHONY: all kernel verify rootfs boot iso checksums clean check-tools help
+# Python interpreter used to compile the IPC proto stubs. Override with
+# `make PYTHON=python install` on hosts where python3 is not on PATH.
+PYTHON ?= python3
+AGENTS_DIR := $(PROJECT_ROOT)/agents
+
+.PHONY: all kernel verify rootfs boot iso checksums clean check-tools help proto install
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 help:
@@ -29,12 +34,14 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all        Full pipeline: kernel → verify → rootfs → boot → iso → checksums"
-	@echo "  kernel     Build Linux kernel with COGNOS defconfig"
-	@echo "  verify     Verify kernel .config compliance against security policy"
+	@echo "  kernel     Build Linux kernel .deb artifacts"
+	@echo "  verify     Verify built kernel package config"
 	@echo "  rootfs     Build root filesystem (depends on kernel)"
 	@echo "  boot       Configure bootloader and boot parameters"
 	@echo "  iso        Assemble bootable ISO image (depends on rootfs)"
 	@echo "  checksums  Generate SHA256SUMS for all output artifacts"
+	@echo "  proto      Compile cognos.proto into Python gRPC stubs"
+	@echo "  install    Install runtime prerequisites (compiles proto stubs)"
 	@echo "  clean      Remove all build artifacts and caches"
 	@echo "  check-tools  Verify all required tools are installed"
 	@echo ""
@@ -56,12 +63,12 @@ all: kernel verify rootfs boot iso checksums
 # ─── Kernel Build ─────────────────────────────────────────────────────────────
 kernel: check-tools
 	@echo "[make] Building kernel..."
-	@bash "$(BUILD_DIR)/kernel_build.sh"
+	@bash "$(PROJECT_ROOT)/scripts/build_kernel.sh"
 
 # ─── Kernel Config Verification ───────────────────────────────────────────────
 verify: kernel
 	@echo "[make] Verifying kernel config compliance..."
-	@bash "$(BUILD_DIR)/verify_kernel_config.sh"
+	@bash "$(PROJECT_ROOT)/scripts/verify_kernel_package.sh" "$(PROJECT_ROOT)/build/artifacts"
 
 # ─── Root Filesystem ──────────────────────────────────────────────────────────
 rootfs: kernel
@@ -76,7 +83,7 @@ boot: rootfs
 # ─── ISO Assembly ─────────────────────────────────────────────────────────────
 iso: boot
 	@echo "[make] Assembling ISO image..."
-	@bash "$(BUILD_DIR)/iso_builder.sh"
+	@bash "$(PROJECT_ROOT)/scripts/build_iso.sh"
 
 # ─── Checksums ────────────────────────────────────────────────────────────────
 checksums:
@@ -90,6 +97,23 @@ checksums:
 			echo "[make] No artifacts found to checksum"; \
 		fi
 
+# ─── Python gRPC Stubs ────────────────────────────────────────────────────────
+# Compile the canonical ipc/grpc/proto/cognos.proto into the Python stubs
+# (cognos_pb2.py, cognos_pb2_grpc.py) that the agent IPC client imports.
+# Without these, agents/shared/ipc.py silently falls back to the
+# unauthenticated JSON path and the test suite never exercises the real
+# gRPC contract. Reuses agents/generate_proto.py as the single source of truth.
+proto:
+	@echo "[make] Generating Python gRPC stubs from cognos.proto..."
+	@cd "$(AGENTS_DIR)" && "$(PYTHON)" generate_proto.py
+
+# ─── Install ──────────────────────────────────────────────────────────────────
+# Runtime prerequisites that must exist before the agents can start for real.
+# Currently: compile the IPC proto stubs. Extend this target as further
+# install steps (deps, config dirs, binaries) come online per docs/ROADMAP.md.
+install: proto
+	@echo "[make] install complete — Python gRPC stubs generated"
+
 # ─── Clean ────────────────────────────────────────────────────────────────────
 clean:
 	@echo "[make] Cleaning build artifacts..."
@@ -97,6 +121,7 @@ clean:
 	rm -rf "$(BUILD_DIR)/cache/linux-src"
 	rm -rf "$(BUILD_DIR)/rootfs_work"
 	rm -rf "$(BUILD_DIR)/iso_work"
+	rm -f "$(AGENTS_DIR)"/proto/cognos_pb2.py "$(AGENTS_DIR)"/proto/cognos_pb2_grpc.py
 	@echo "[make] Clean complete"
 
 # ─── Tool Verification ────────────────────────────────────────────────────────

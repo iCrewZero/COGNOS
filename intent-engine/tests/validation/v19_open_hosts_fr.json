@@ -1,0 +1,37 @@
+{
+  "input": "affiche le fichier hosts du système",
+  "context": {
+    "last_active_domain": "system",
+    "last_active_files": ["/etc/hosts", "resolv.conf"],
+    "current_time": "08:20",
+    "time_since_last_session": "15m"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440019",
+    "raw_input": "affiche le fichier hosts du système",
+    "goal": "open_file",
+    "domain": "system",
+    "confidence": 0.91,
+    "ambiguity_score": 0.1,
+    "risk_estimate": 0.05,
+    "required_context": [],
+    "candidate_actions": [
+      {
+        "action": "open_file",
+        "target": "/etc/hosts",
+        "confidence": 0.91,
+        "recency_score": 0.85
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "system",
+      "last_active_files": ["/etc/hosts", "resolv.conf"],
+      "current_time": "08:20",
+      "time_since_last_session": "15m"
+    },
+    "hal_pre_score": 0.05,
+    "escalate_to_cloud": false
+  }
+}

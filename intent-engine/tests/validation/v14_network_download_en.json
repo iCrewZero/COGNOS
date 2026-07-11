@@ -1,0 +1,37 @@
+{
+  "input": "fetch the telemetry archive from the internal mirror",
+  "context": {
+    "last_active_domain": "downloads",
+    "last_active_files": [],
+    "current_time": "11:45",
+    "time_since_last_session": "2h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440014",
+    "raw_input": "fetch the telemetry archive from the internal mirror",
+    "goal": "network_download",
+    "domain": "downloads",
+    "confidence": 0.88,
+    "ambiguity_score": 0.12,
+    "risk_estimate": 0.2,
+    "required_context": ["network"],
+    "candidate_actions": [
+      {
+        "action": "download_file",
+        "target": "https://mirror.internal/telemetry.tgz",
+        "confidence": 0.88,
+        "recency_score": 0.3
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "downloads",
+      "last_active_files": [],
+      "current_time": "11:45",
+      "time_since_last_session": "2h"
+    },
+    "hal_pre_score": 0.2,
+    "escalate_to_cloud": false
+  }
+}

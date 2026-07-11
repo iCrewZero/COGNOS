@@ -1,0 +1,37 @@
+{
+  "input": "envoie ce fichier par email à Marie",
+  "context": {
+    "last_active_domain": "work",
+    "last_active_files": ["rapport.pdf"],
+    "current_time": "17:45",
+    "time_since_last_session": "5m"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "envoie ce fichier par email à Marie",
+    "goal": "network_send",
+    "domain": "work",
+    "confidence": 0.76,
+    "ambiguity_score": 0.3,
+    "risk_estimate": 0.5,
+    "required_context": ["network", "contact"],
+    "candidate_actions": [
+      {
+        "action": "send_email",
+        "target": "~/work/rapport.pdf",
+        "confidence": 0.76,
+        "recency_score": 0.8
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "work",
+      "last_active_files": ["rapport.pdf"],
+      "current_time": "17:45",
+      "time_since_last_session": "5m"
+    },
+    "hal_pre_score": 0.5,
+    "escalate_to_cloud": false
+  }
+}

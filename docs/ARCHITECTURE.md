@@ -46,17 +46,47 @@ Key modules:
 
 ### 4. IPC Layer — `ipc/grpc/`
 
-gRPC communication backbone. All inter-agent communication flows through
-a single gRPC service (`CognosIpc`) with 6 RPCs:
-- `DispatchIntent` — route parsed intents to target agents
-- `QueryMemory` — vector + tag search against the memory fabric
-- `HalGate` — request hardware actions through HAL
-- `ResourceHint` — push scheduling hints to the scheduler daemon
-- `Heartbeat` — liveness ping
-- `StreamEvents` — server-streaming event subscription
+gRPC communication backbone. All agents speak the **same wire protocol**
+(`CognosIpc`, six RPCs, HMAC-SHA256 `Envelope` on every call) but v1 deploys
+**several listeners** in a point-to-point mesh — not one process that
+implements every RPC.
 
-Authentication uses HMAC-SHA256 tokens. Every RPC carries an `Envelope`
-with trace_id, source, target, capability, and signature.
+| Listener | Binary / unit | Default bind | Env (client) | Env (bind) |
+|----------|---------------|--------------|--------------|------------|
+| Central IPC bus | `cognos-ipc-server` | `127.0.0.1:7443` | `COGNOS_IPC_ENDPOINT` | `COGNOS_IPC_BIND` |
+| HAL gate | `cognos-hal` | `127.0.0.1:7444` | `COGNOS_HAL_ENDPOINT` | `COGNOS_HAL_BIND` |
+| Intent parsing | `cognos-intent` | `127.0.0.1:7445` | `COGNOS_INTENT_ENDPOINT` | `COGNOS_INTENT_BIND` |
+
+RPC surface (shared proto `ipc/grpc/proto/cognos.proto`):
+
+- `DispatchIntent` — parse user utterance → `IntentActionGraph` (**real impl:
+  `cognos-intent` only**)
+- `QueryMemory` — vector + tag search (**central bus**; echo responder until
+  memory is wired)
+- `HalGate` — risk score + grant/deny (**real impl: `cognos-hal` only**)
+- `ResourceHint` — scheduling hints (**central bus** → event stream)
+- `Heartbeat` — liveness + agent registration (**central bus**)
+- `StreamEvents` — server-streaming event subscription (**central bus**)
+
+Daemons register on the central bus (`COGNOS_IPC_ENDPOINT`) and heartbeat there.
+Callers that need **real** gate decisions or parsed action graphs dial the
+dedicated endpoints directly — the orchestrator uses `COGNOS_HAL_ENDPOINT` and
+`COGNOS_INTENT_ENDPOINT` for this. Pulling HAL or the intent-engine into
+`cognos-ipc-grpc` would create dependency cycles, so each crate hosts its own
+`CognosServer` with an injected handler (`HalGateHandler`, `IntentHandler`).
+
+**IPC mesh topology (v1 decision).** One proto, multiple gRPC listeners: the
+central `cognos-ipc-server` is the event bus and agent registry (`Heartbeat`,
+`StreamEvents`, `ResourceHint`, `QueryMemory`); `cognos-hal` on `:7444` is the
+**only** authoritative `HalGate` implementation; `cognos-intent` on `:7445` is
+the **only** authoritative `DispatchIntent` implementation. The central listener
+still exposes `HalGate` and `DispatchIntent` for proto compatibility, but
+without an injected handler it **must not** return plausible success-shaped
+answers (`granted`, `pending`, `approval_required` that look like real work) —
+it returns `status = "failed"` with an explicit `message` naming the correct
+endpoint (`COGNOS_HAL_ENDPOINT` / `COGNOS_INTENT_ENDPOINT`). Systemd units,
+the CLI, and UI code must target `:7444` / `:7445` for gate and intent
+parsing; `:7443` is the bus, not a shortcut to HAL or the intent-engine.
 
 ### 5. Scheduler — `scheduler/`
 
@@ -112,12 +142,15 @@ User-facing command-line interface with subcommands:
 
 ```
 User utterance
-    → Intent Engine (parse + validate)
-    → Coordinator (route to agents)
-    → Agents (planner, memory, security, etc.)
-    → HAL Gate (risk score + approve/deny)
+    → Intent Engine (:7445 DispatchIntent) — parse + validate → action graph
+    → Orchestrator — expand graph into TaskNodes, schedule agents
+    → Agents (planner, memory, security, file, …)
+    → HAL Gate (:7444 HalGate) — risk score + approve/deny
     → File agent / system (execute with grant token)
 ```
+
+Agent registration and cross-cutting events flow through the central IPC bus
+(`:7443`): heartbeats, `StreamEvents`, `ResourceHint`, `QueryMemory`.
 
 ## Security Model
 

@@ -7,13 +7,21 @@
 //! the result to stdout in human-readable form (or JSON where requested).
 //!
 //! v0: stub implementation.
+#![allow(dead_code)]
+
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
+use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, info, warn};
+use cognos_ipc_grpc::client::{ClientConfig, CognosClient};
+use cognos_ipc_grpc::pipeline_metrics::log_stage;
+use cognos_ipc_grpc::proto::v1::{Intent, PipelineMetrics, PipelineMetricsRequest};
 use uuid::Uuid;
 
+use crate::approval_watch;
 use crate::runtime::{CliRuntime, RuntimeError};
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
@@ -41,9 +49,7 @@ pub enum CliError {
 impl From<RuntimeError> for CliError {
     fn from(e: RuntimeError) -> Self {
         match e {
-            RuntimeError::ConnectFailed => {
-                CliError::ConnectionFailed("connect failed".into())
-            }
+            RuntimeError::ConnectFailed(msg) => CliError::ConnectionFailed(msg),
             RuntimeError::Timeout => CliError::Cancelled,
             RuntimeError::Cancelled => CliError::Cancelled,
             RuntimeError::Disconnected => {
@@ -71,10 +77,13 @@ pub struct IntentArgs {
     pub priority: Priority,
 }
 
-/// Arguments for `cognos approval`.
-#[derive(Debug, Clone, Serialize, Deserialize, clap::Args)]
+/// Arguments for `cognos approval` (deferred list/approve/deny).
+#[derive(Debug, Clone, clap::Args)]
 pub struct ApprovalArgs {
-    /// List all pending HAL approvals.
+    #[command(subcommand)]
+    pub command: Option<ApprovalCommand>,
+
+    /// List all pending HAL approvals (deferred queue).
     #[arg(long)]
     pub list: bool,
 
@@ -89,6 +98,13 @@ pub struct ApprovalArgs {
     /// Emit machine-readable JSON instead of a human-readable table.
     #[arg(long)]
     pub json: bool,
+}
+
+/// Real-time or deferred approval subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum ApprovalCommand {
+    /// Listen on the HAL UI socket and decide interactively (blocking).
+    Watch(approval_watch::WatchArgs),
 }
 
 /// Arguments for `cognos memory`.
@@ -227,53 +243,131 @@ pub struct AgentStatus {
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
-/// `cognos intent` — submit intent text to the cognos-intent service and
-/// print the decomposed task graph.
+/// `cognos intent` — submit intent text to the orchestrator ingress and
+/// print per-task status plus HAL decisions.
 pub async fn cmd_intent(args: IntentArgs) -> Result<(), CliError> {
     info!(dry_run = args.dry_run, priority = ?args.priority, "submitting intent");
     debug!(text = %args.text, "intent text");
 
-    let rt = CliRuntime::connect(default_endpoint()).await?;
-    // TODO(v1): rt.client().dispatch_intent(IntentRequest { ... }) and
-    //           receive a streamed TaskGraph.
-    let _ = rt;
+    if args.dry_run {
+        println!("dry-run: would submit intent to orchestrator");
+        println!("  text:     {}", args.text);
+        println!("  priority: {:?}", args.priority);
+        return Ok(());
+    }
 
-    let graph = CliTaskGraph {
-        intent_id: "00000000-0000-0000-0000-000000000000".to_string(),
-        nodes: Vec::new(),
+    let endpoint = default_endpoint();
+    let rt = CliRuntime::connect(endpoint).await?;
+    let trace_id = Uuid::new_v4().to_string();
+    let intent = Intent {
+        intent_id: Uuid::new_v4().to_string(),
+        utterance: args.text.clone(),
+        session_id: "cli".to_string(),
+        trace_id: trace_id.clone(),
+        ..Default::default()
     };
 
-    println!("intent:     {}", args.text);
-    println!("priority:   {:?}", args.priority);
-    println!("dry_run:    {}", args.dry_run);
-    println!("intent_id:  {}", graph.intent_id);
-    println!("nodes:      {}", graph.nodes.len());
-    for node in &graph.nodes {
-        println!(
-            "  - [{}] {} (agent={}, caps={:?})",
-            node.id, node.description, node.agent, node.capabilities
-        );
+    let dispatch_started = Instant::now();
+    tracing::info!(
+        trace_id = %trace_id,
+        stage = "cli_dispatch_start",
+        utterance = %args.text,
+        "pipeline stage"
+    );
+
+    let resp = rt
+        .client
+        .dispatch_intent(intent)
+        .await
+        .map_err(|e| CliError::ServiceError(e.to_string()))?;
+
+    let cli_ms = dispatch_started.elapsed().as_millis() as u64;
+    log_stage(&trace_id, "cli_dispatch", cli_ms);
+    tracing::info!(
+        trace_id = %trace_id,
+        stage = "cli_dispatch",
+        latency_ms = cli_ms,
+        status = %resp.status,
+        "pipeline stage"
+    );
+
+    println!("trace_id:   {}", resp.trace_id);
+    println!("intent_id:  {}", resp.intent_id);
+    println!("status:     {}", resp.status);
+    println!("message:    {}", resp.message);
+
+    if !resp.result_json.is_empty() {
+        if let Ok(report) = serde_json::from_slice::<serde_json::Value>(&resp.result_json) {
+            if let Some(latency) = report.get("latency") {
+                let total = latency.get("total_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                let parse = latency.get("parse_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                let orch = latency
+                    .get("orchestrate_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let exec = latency.get("execute_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!(
+                    "latency:    total={total}ms parse={parse}ms orchestrate={orch}ms execute={exec}ms"
+                );
+            }
+            if let Some(tasks) = report.get("tasks").and_then(|t| t.as_array()) {
+                println!("\nTasks:");
+                for t in tasks {
+                    let action = t.get("action").and_then(|v| v.as_str()).unwrap_or("-");
+                    let target = t.get("target").and_then(|v| v.as_str()).unwrap_or("-");
+                    let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("-");
+                    let hal = t
+                        .get("hal_decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    let msg = t
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    println!("  [{status}] {action} → {target}");
+                    println!("           HAL: {hal}");
+                    if !msg.is_empty() {
+                        println!("           {msg}");
+                    }
+                }
+            }
+            let success = report
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(resp.status == "ok");
+            if !success {
+                return Err(CliError::ServiceError(report
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("intent execution failed")
+                    .to_string()));
+            }
+        }
+    } else if resp.status != "ok" {
+        return Err(CliError::ServiceError(resp.message));
     }
+
     Ok(())
 }
 
 /// `cognos approval` — list pending HAL approvals, optionally approve or
 /// deny by id.
 pub async fn cmd_approval(args: ApprovalArgs) -> Result<(), CliError> {
+    if let Some(ApprovalCommand::Watch(watch_args)) = args.command {
+        return approval_watch::cmd_approval_watch(watch_args).await;
+    }
+
     // Validate flag combinations.
     if args.approve.is_some() && args.deny.is_some() {
         return Err(CliError::InvalidArgs(
             "--approve and --deny are mutually exclusive".into(),
         ));
     }
-    if !args.list && args.approve.is_none() && args.deny.is_none() {
-        // Default behaviour when no flag is given: list.
-        return cmd_approval(ApprovalArgs {
-            list: true,
-            ..args
-        })
-        .await;
-    }
+    let args = if !args.list && args.approve.is_none() && args.deny.is_none() {
+        ApprovalArgs { list: true, ..args }
+    } else {
+        args
+    };
 
     let rt = CliRuntime::connect(default_endpoint()).await?;
     // TODO(v1): rt.client().list_pending_approvals() /
@@ -390,15 +484,10 @@ pub async fn cmd_memory(args: MemoryArgs) -> Result<(), CliError> {
 /// `cognos status` — show agent statuses, system metrics, and the current
 /// scenario.
 pub async fn cmd_status(args: StatusArgs) -> Result<(), CliError> {
-    let rt = CliRuntime::connect(default_endpoint()).await?;
-    // TODO(v1): rt.client().list_agents() + rt.client().system_metrics() +
-    //           rt.client().current_scenario().
-    let _ = rt;
+    let _rt = CliRuntime::connect(default_endpoint()).await?;
 
     if args.watch {
         info!(agent = ?args.agent, "watching status (Ctrl-C to stop)");
-        // TODO(v1): loop with tokio::time::interval(Duration::from_secs(1))
-        //           until the runtime's cancel flag is set.
         warn!("watch mode is a v0 stub — printing a single snapshot");
     }
 
@@ -426,6 +515,22 @@ pub async fn cmd_status(args: StatusArgs) -> Result<(), CliError> {
     if agents.is_empty() {
         println!("(no agents registered — daemons not running?)");
     }
+
+    println!();
+    println!("── Pipeline metrics ──");
+
+    let hal = fetch_pipeline_metrics(&hal_endpoint()).await;
+    println!("HAL (cognos-hal):");
+    print_hal_metrics(&hal);
+
+    let intent = fetch_pipeline_metrics(&intent_endpoint()).await;
+    println!("Intent parser (cognos-intent):");
+    print_parser_metrics(&intent);
+
+    let orch = fetch_pipeline_metrics(&default_endpoint()).await;
+    println!("Latency (cognos-orchestrator):");
+    print_latency_metrics(&orch);
+
     Ok(())
 }
 
@@ -460,9 +565,84 @@ pub async fn cmd_version() -> Result<(), CliError> {
 
 /// Default gRPC endpoint the CLI dials. Overridable via config in v1.
 fn default_endpoint() -> String {
-    // TODO(v1): read from CliConfig (cli.toml or --config) and fall back
-    //           to the COGNOS_CLI_ENDPOINT env var.
-    crate::runtime::DEFAULT_ENDPOINT.to_string()
+    std::env::var("COGNOS_ORCHESTRATOR_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| crate::runtime::DEFAULT_ORCHESTRATOR_ENDPOINT.to_string())
+}
+
+fn hal_endpoint() -> String {
+    std::env::var("COGNOS_HAL_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:7444".to_string())
+}
+
+fn intent_endpoint() -> String {
+    std::env::var("COGNOS_INTENT_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:7445".to_string())
+}
+
+async fn fetch_pipeline_metrics(endpoint: &str) -> Option<PipelineMetrics> {
+    let mut client = CognosClient::new(ClientConfig {
+        agent_id: "cli.status".to_string(),
+        endpoint: endpoint.to_string(),
+        max_reconnect_attempts: 2,
+        request_timeout_ms: 3_000,
+        ..ClientConfig::default()
+    });
+    if client.connect(endpoint).await.is_err() {
+        return None;
+    }
+    client
+        .get_pipeline_metrics(PipelineMetricsRequest::default())
+        .await
+        .ok()
+}
+
+fn print_hal_metrics(m: &Option<PipelineMetrics>) {
+    match m {
+        Some(s) => {
+            println!("  granted:            {}", s.hal_granted);
+            println!("  denied:             {}", s.hal_denied);
+            println!("  approval_required:  {}", s.hal_approval_required);
+        }
+        None => println!("  (unreachable)"),
+    }
+}
+
+fn print_parser_metrics(m: &Option<PipelineMetrics>) {
+    match m {
+        Some(s) => {
+            println!("  cache hits:         {}", s.parser_cache_hits);
+            println!("  cache misses:       {}", s.parser_cache_misses);
+            println!("  fallback uses:      {}", s.parser_fallback_uses);
+            println!("  intent requests:    {}", s.intent_requests);
+        }
+        None => println!("  (unreachable)"),
+    }
+}
+
+fn print_latency_metrics(m: &Option<PipelineMetrics>) {
+    match m {
+        Some(s) => {
+            if s.last_trace_id.is_empty() {
+                println!("  (no samples yet)");
+            } else {
+                println!("  last trace_id:      {}", s.last_trace_id);
+                println!(
+                    "  last total:         {:.0}ms (parse {:.0} / orchestrate {:.0} / execute {:.0})",
+                    s.last_total_latency_ms,
+                    s.last_parse_latency_ms,
+                    s.last_orchestrate_latency_ms,
+                    s.last_execute_latency_ms,
+                );
+            }
+        }
+        None => println!("  (unreachable)"),
+    }
 }
 
 // v0: stub implementation

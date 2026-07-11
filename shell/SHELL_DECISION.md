@@ -1,13 +1,18 @@
 # shell/ — COGNOS Wayland Shell (Candidate A)
 
-This directory contains a Wayland compositor and shell implementation
-built directly against wayland-server / smithay.
+This directory contains the rejected v0 candidate: a full Wayland compositor
+and shell implementation built directly against wayland-server / smithay.
+
+## Decision
+The v0 decision is documented in the repository root at `SHELL_DECISION.md`.
+That document selects `GTK4-shell` as the shipping direction for v0.
 
 ## Status
-Not in workspace. Needs Cargo.toml + dependencies before it can compile.
+Do not build new product features here for the current milestone.
+
+This candidate remains useful only as historical context or as a later research
+track if the GTK4 Wayland-client architecture proves insufficient.
 
 ## Relationship to ui/
-`ui/` is a competing implementation that uses compositor hooks instead of
-a full compositor. See `ui/UI_DECISION.md` for the alternative approach.
-
-**One of these must be chosen and the other removed before v0.1 ships.**
+`ui/` is the chosen direction for v0: a lighter shell layered onto an existing
+Wayland compositor rather than replacing the compositor itself.

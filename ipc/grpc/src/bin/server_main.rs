@@ -14,7 +14,14 @@ async fn main() {
         .with_target(false)
         .init();
 
-    let config = ServerConfig::default();
+    let mut config = ServerConfig::default();
+    // Allow the bind address to be overridden from the environment so tests
+    // (and deployments) can pick a free port instead of the fixed default.
+    if let Ok(bind) = std::env::var("COGNOS_IPC_BIND") {
+        if !bind.is_empty() {
+            config.bind_addr = bind;
+        }
+    }
     let addr: SocketAddr = config.bind_addr.parse().expect("invalid bind address");
 
     let mut runtime = IpcRuntime::with_server_config(config);

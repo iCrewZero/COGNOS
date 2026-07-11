@@ -1,0 +1,50 @@
+# COGNOS intent-engine configuration.
+#
+# Deploy to /etc/cognos/intent.toml (the path the systemd unit passes via
+# --config). Every value here is optional: the daemon starts on sane dev
+# defaults when the file (or any individual key) is absent, and environment
+# variables override both defaults and file values.
+#
+# Resolution order (last wins):
+#   1. built-in defaults
+#   2. this file
+#   3. environment variables
+#
+# Env overrides:
+#   COGNOS_INTENT_BACKEND            → inference.backend (vllm|llama)
+#   COGNOS_INTENT_LLAMA_ENDPOINT     → inference.endpoint (legacy name)
+#   COGNOS_INTENT_MODEL              → inference.model
+#   COGNOS_INTENT_TIMEOUT_MS         → inference.timeout_ms
+#   COGNOS_INTENT_SCHEMA             → inference.schema
+#   COGNOS_INTENT_GRAMMAR            → inference.grammar (llama backend only)
+#   COGNOS_INTENT_BIND               → [ipc].bind
+#   COGNOS_IPC_ENDPOINT              → [ipc].endpoint
+#   COGNOS_IPC_SECRET                → [ipc].secret
+
+[inference]
+# Production backend: vLLM with XGrammar JSON Schema structured output.
+backend = "vllm"
+endpoint = "http://127.0.0.1:8080"
+model = "Qwen/Qwen2.5-7B-Instruct-AWQ"
+timeout_ms = 30000
+schema = "/etc/cognos/intent-llm-output.schema.json"
+# Legacy llama-server GBNF path (only when backend = "llama").
+grammar = "/etc/cognos/intent.gbnf"
+
+[ipc]
+endpoint = "http://127.0.0.1:7443"
+bind = "127.0.0.1:7445"
+secret = ""
+
+# Legacy [llama] section — still honored for backward compatibility.
+[llama]
+endpoint = "http://127.0.0.1:8080"
+model = "Qwen/Qwen2.5-7B-Instruct-AWQ"
+timeout_ms = 30000
+grammar = "/etc/cognos/intent.gbnf"
+
+[vllm]
+endpoint = "http://127.0.0.1:8080"
+model = "Qwen/Qwen2.5-7B-Instruct-AWQ"
+timeout_ms = 30000
+schema = "/etc/cognos/intent-llm-output.schema.json"

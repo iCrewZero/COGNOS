@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IntentLlmOutputGoldenEval",
+  "description": "Golden-corpus eval schema (broader than production GBNF — covers all 15 fixture goals/actions)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "goal",
+    "domain",
+    "confidence",
+    "ambiguity_score",
+    "risk_estimate",
+    "required_context",
+    "candidate_actions",
+    "disambiguation_required",
+    "disambiguation_question",
+    "hal_pre_score",
+    "escalate_to_cloud"
+  ],
+  "properties": {
+    "goal": {
+      "type": "string",
+      "enum": [
+        "create_dir",
+        "open_workspace",
+        "open_file",
+        "delete_path",
+        "pkg.install",
+        "out_of_scope",
+        "install_package",
+        "package_and_convert",
+        "search_files",
+        "network_download",
+        "network_send",
+        "await_input",
+        "code_task"
+      ]
+    },
+    "domain": {
+      "type": ["string", "null"],
+      "enum": [
+        "system",
+        "robotics",
+        "robotique",
+        "finance",
+        "media",
+        "coding",
+        "work",
+        "downloads",
+        null
+      ]
+    },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "ambiguity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "risk_estimate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "required_context": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z_]{1,24}$" }
+    },
+    "candidate_actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate_action" }
+    },
+    "disambiguation_required": { "type": "boolean" },
+    "disambiguation_question": { "type": ["string", "null"] },
+    "hal_pre_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "escalate_to_cloud": { "type": "boolean" }
+  },
+  "$defs": {
+    "candidate_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "target", "confidence", "recency_score"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create_dir",
+            "create_file",
+            "open_file",
+            "open_files",
+            "install_package",
+            "convert_media",
+            "refactor_code",
+            "run_tests",
+            "search_files",
+            "download_file",
+            "send_email",
+            "delete_path",
+            "delete_files"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[~./a-zA-Z0-9_:/=?&-]{1,80}$"
+        },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "recency_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    }
+  }
+}

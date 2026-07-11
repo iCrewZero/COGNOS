@@ -10,8 +10,6 @@ use crate::{
         SessionContext,
         TrustState,
     },
-
-    risk_weights::RiskEngine,
 };
 
 pub struct ConfidenceEngine;
@@ -61,7 +59,7 @@ impl ConfidenceEngine {
         provenance:
             &ProvenanceData,
     ) -> f32 {
-        let mut score = 0.0;
+        let mut score: f32 = 0.0;
 
         if provenance
             .signature_verified

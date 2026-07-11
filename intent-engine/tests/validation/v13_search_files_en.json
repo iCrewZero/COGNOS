@@ -1,0 +1,37 @@
+{
+  "input": "find the backup configuration from last Tuesday",
+  "context": {
+    "last_active_domain": "system",
+    "last_active_files": ["backup.conf", "cron.daily"],
+    "current_time": "07:30",
+    "time_since_last_session": "8h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440013",
+    "raw_input": "find the backup configuration from last Tuesday",
+    "goal": "search_files",
+    "domain": "system",
+    "confidence": 0.84,
+    "ambiguity_score": 0.22,
+    "risk_estimate": 0.05,
+    "required_context": [],
+    "candidate_actions": [
+      {
+        "action": "search_files",
+        "target": "~/backups",
+        "confidence": 0.84,
+        "recency_score": 0.7
+      }
+    ],
+    "disambiguation_required": false,
+    "disambiguation_question": null,
+    "session_context": {
+      "last_active_domain": "system",
+      "last_active_files": ["backup.conf", "cron.daily"],
+      "current_time": "07:30",
+      "time_since_last_session": "8h"
+    },
+    "hal_pre_score": 0.05,
+    "escalate_to_cloud": false
+  }
+}

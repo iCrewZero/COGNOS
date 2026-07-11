@@ -67,7 +67,7 @@ pub enum RewriteVerdict {
 // ─── Pending Request ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PendingRequest {
+pub struct PendingRequest {
     id: RewriteRequestId,
     request: RewriteRequest,
     verdict: RewriteVerdict,

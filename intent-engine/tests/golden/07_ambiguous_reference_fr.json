@@ -1,0 +1,43 @@
+{
+  "input": "ouvre le projet robotique",
+  "context": {
+    "last_active_domain": "robotics",
+    "last_active_files": ["bras.py", "rover.py"],
+    "current_time": "16:05",
+    "time_since_last_session": "3h"
+  },
+  "expected_intent": {
+    "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "raw_input": "ouvre le projet robotique",
+    "goal": "open_workspace",
+    "domain": "robotique",
+    "confidence": 0.68,
+    "ambiguity_score": 0.7,
+    "risk_estimate": 0.1,
+    "required_context": ["recent_project"],
+    "candidate_actions": [
+      {
+        "action": "open_files",
+        "target": "~/projets/robot-scolaire/bras.py",
+        "confidence": 0.66,
+        "recency_score": 0.5
+      },
+      {
+        "action": "open_files",
+        "target": "~/projets/robot-perso/rover.py",
+        "confidence": 0.62,
+        "recency_score": 0.48
+      }
+    ],
+    "disambiguation_required": true,
+    "disambiguation_question": "Le bras robotisé de l'école ou le rover perso ?",
+    "session_context": {
+      "last_active_domain": "robotics",
+      "last_active_files": ["bras.py", "rover.py"],
+      "current_time": "16:05",
+      "time_since_last_session": "3h"
+    },
+    "hal_pre_score": 0.1,
+    "escalate_to_cloud": true
+  }
+}

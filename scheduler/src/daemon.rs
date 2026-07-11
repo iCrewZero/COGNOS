@@ -6,7 +6,7 @@
 /// All /sys writes go through systemd dbus or cgroup v2 file interface.
 /// No unsafe code. No direct memory writes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /// All recognized usage scenarios.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Scenario {
     CodingActive,
     VideoRendering,
@@ -22,6 +22,7 @@ pub enum Scenario {
     IdleOvernight,
     Gaming,
     VibeCoding,
+    #[default]
     GeneralUse,
 }
 

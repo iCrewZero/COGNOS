@@ -1,0 +1,46 @@
+# GBNF grammar for the COGNOS IntentSchema (LLM-emitted fields only).
+#
+# System-injected fields (NOT generated — stamped in parse_llm_output_with_context):
+#   raw_input, intent_id, session_context, source
+#
+# Goal taxonomy: docs/GOAL_TAXONOMY.md (aligned with intent-llm-output.schema.json v2)
+#
+# llama.cpp GBNF notes:
+# - rule names: dashed lowercase only (no underscores)
+# - `space` is a single ASCII space (no newlines)
+
+root ::= root-clear | root-disamb
+
+root-clear ::= "{" space "\"goal\":" space goal-string space "," space "\"domain\":" space domain-value space "," space "\"confidence\":" space unit space "," space "\"ambiguity_score\":" space unit space "," space "\"risk_estimate\":" space unit space "," space "\"required_context\":" space string-array space "," space "\"candidate_actions\":" space candidate-array space "," space "\"disambiguation_required\":" space "false" space "," space "\"disambiguation_question\":" space "null" space "," space "\"hal_pre_score\":" space unit space "," space "\"escalate_to_cloud\":" space boolean space "}"
+
+root-disamb ::= "{" space "\"goal\":" space goal-string space "," space "\"domain\":" space domain-value space "," space "\"confidence\":" space unit space "," space "\"ambiguity_score\":" space unit space "," space "\"risk_estimate\":" space unit space "," space "\"required_context\":" space string-array space "," space "\"candidate_actions\":" space candidate-array-nonempty space "," space "\"disambiguation_required\":" space "true" space "," space "\"disambiguation_question\":" space question-string space "," space "\"hal_pre_score\":" space unit space "," space "\"escalate_to_cloud\":" space boolean space "}"
+
+candidate-array ::= "[" space ( candidate ( space "," space candidate )* )? space "]"
+
+candidate-array-nonempty ::= "[" space candidate ( space "," space candidate )+ space "]"
+
+candidate ::= "{" space "\"action\":" space action-string space "," space "\"target\":" space target-string space "," space "\"confidence\":" space unit space "," space "\"recency_score\":" space unit space "}"
+
+context-key ::= "\"" [a-z_]{1,24} "\""
+
+string-array ::= "[" space ( context-key ( space "," space context-key )* )? space "]"
+
+goal-string ::= "\"await_input\"" | "\"code_task\"" | "\"create_dir\"" | "\"delete_path\"" | "\"install_package\"" | "\"network_download\"" | "\"network_send\"" | "\"open_file\"" | "\"open_workspace\"" | "\"out_of_scope\"" | "\"package_and_convert\"" | "\"pkg.install\"" | "\"search_files\""
+
+action-string ::= "\"create_dir\"" | "\"create_file\"" | "\"open_file\"" | "\"open_files\"" | "\"install_package\"" | "\"convert_media\"" | "\"refactor_code\"" | "\"run_tests\"" | "\"search_files\"" | "\"download_file\"" | "\"send_email\"" | "\"delete_path\"" | "\"delete_files\""
+
+target-string ::= "\"" target-char{1,80} "\""
+
+target-char ::= [a-zA-Z0-9_./~:=?&-]
+
+question-string ::= "\"" question-char{1,80} "\""
+
+question-char ::= [a-zA-Z0-9 ,?._-]
+
+domain-value ::= "null" | "\"system\"" | "\"robotics\"" | "\"robotique\"" | "\"finance\"" | "\"media\"" | "\"coding\"" | "\"work\"" | "\"downloads\""
+
+boolean ::= "true" | "false"
+
+unit ::= "0" ( "." [0-9]{1,2} )? | "1" ( "." "0"{1,2} )?
+
+space ::= " "
