@@ -4,17 +4,17 @@
 # Do NOT add it here — it cannot be pip-installed.
 
 # gRPC communication with the Rust IPC server
-grpcio>=1.60.0
-grpcio-tools>=1.60.0
+grpcio>=1.82.1
+grpcio-tools>=1.82.1
 
 # Semantic vector memory
-chromadb>=0.4.0
+chromadb>=1.5.9
 
 # Embedding models for memory queries
-sentence-transformers>=2.2.0
+sentence-transformers>=5.6.0
 
 # Async file I/O
-aiofiles>=23.0.0
+aiofiles>=25.1.0
 
 # Health checking for gRPC
-grpcio-health-checking>=0.36.0
+grpcio-health-checking>=1.82.1
