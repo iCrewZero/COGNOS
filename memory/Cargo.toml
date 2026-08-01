@@ -20,7 +20,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # [dependencies] (not [dev-dependencies]) — Cargo forbids optional
 # dev-dependencies, and the [features] table references them.
 # HTTP client for memory service IPC and ChromaDB REST API.
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.13", features = ["json"], optional = true }
 # ANFS integration for ChromaDB-backed memory indexing.
 cognos-anfs = { path = "anfs", optional = true }
 # For mlock in secure_pool.
